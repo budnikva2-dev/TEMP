@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Конструктор Солнечной системы v3.6 — интерактивная N-body симуляция: парниковый эффект, жизнь, луны, типы звёзд, шкала Кардашева, живое Солнце с протуберанцами, кометные хвосты, космический навигатор">
-<title>Конструктор Солнечной системы — v3.9.1</title>
+<title>Конструктор Солнечной системы — v3.10</title>
 <style>
   :root {
     --bg: #0a0f1a; --panel: #111827; --panel-2: #1f2937; --border: #2a3548;
@@ -273,7 +273,7 @@
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="scene-canvas" data-help="canvas"></canvas>
-      <div id="watermark">В. А. Будник<br>23.11.2026 · v3.9.1</div>
+      <div id="watermark">В. А. Будник<br>23.11.2026 · v3.10</div>
       <div class="hud-corner" id="hud-info" data-help="hud">
         <div><b>ЛКМ</b> — выбрать · <b>drag</b> — вращать · <b>СКМ</b> — пан · <b>колесо</b> — зум</div>
         <div><kbd>Space</kbd> пауза · <kbd>F</kbd> вся система · <kbd>R</kbd> сброс · <kbd>+</kbd> добавить · <kbd>N</kbd> навигатор · <kbd>V</kbd> камера</div>
@@ -437,6 +437,18 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // === v3.0: постобработка bloom (для свечения звезды) — инициализируется после renderer ===
 let composer = null, bloomPass = null;
+// Кино: кинематографический bloom — порог поднят, чтобы блумила только звезда/выхлоп/кристаллы,
+// а не плоские планеты. radius больше = мягче ореол. При полёте корабля — буст для wow-эффекта.
+let _navReady = false; // выставляется в true после определения NAV
+function applyNavBloom() {
+  if (!bloomPass || !bloomPass.enabled) return;
+  const base = state.quality === 'high' ? 1.25 : 0.85;
+  // Кино: при полёте корабля — буст для wow-эффекта (выхлоп/след/кристаллы)
+  const flying = (_navReady && NAV.flying) ? 0.55 : 0;
+  bloomPass.strength = base + flying;
+  bloomPass.radius = 0.85; // мягкий ореол (было 0.6 — жёсткий)
+  bloomPass.threshold = 0.65; // блумит только яркое (было 0.4 — блумили планеты)
+}
 function applyQuality(q) {
   state.quality = q;
   const pr = (q === 'high') ? Math.min(window.devicePixelRatio, 2) : (q === 'med' ? 1 : 0.7);
@@ -445,9 +457,11 @@ function applyQuality(q) {
   if (composer && bloomPass) {
     composer.setSize(w, h);
     bloomPass.resolution.set(w, h);
-    bloomPass.strength = q === 'high' ? 1.1 : (q === 'med' ? 0.7 : 0.0);
     bloomPass.enabled = q !== 'low';
+    applyNavBloom();
   }
+  // Кино: адаптивный exposure — при полёте чуть ярче, глубже тени
+  renderer.toneMappingExposure = (_navReady && NAV.flying) ? 1.35 : 1.1;
   if (typeof refreshHZRing === 'function') refreshHZRing();
 }
 
@@ -460,6 +474,7 @@ const SIGMA_SB = 5.670374e-8;
 const M_EARTH = 3.003e-6;             // в M_sun
 const R_EARTH_M = 6.371e6;
 const R_SUN_M = 6.96e8;
+const R_RG_SUN = 220; // P0-4: красный гигант 220 R☉ (~1.02 а.е.) — тогда съедает Венеру (перигей 0.715 а.е.), как обещает справка. Было 100 R☉=0.465 а.е. — не доставал
 const T_SUN = 5772;
 const P_TRIPLE_BAR = 0.0061;          // 611 Па
 const BASE_TEMPO_YPS = 1 / 365.25;    // Ф37: x1 = 1:1 с реальным временем (1 с реального = 1 с симуляции, год = 365.25 с)
@@ -511,8 +526,10 @@ const CATASTROPHES = [
   { name: 'астероид',      period: 1e8, drop: 1, dT: 20,  tau: 1e3, minStage: 1 },
   { name: 'супервулкан',   period: 1e7, drop: 1, dT: -10, tau: 1e4, minStage: 1 },
   { name: 'гамма-всплеск', period: 1e9, drop: 2, dT: 0,   tau: 0,   minStage: 1 },
-  { name: 'ядерная война', period: 1e3, drop: 2, dT: 10,  tau: 100, minStage: 4 },
-  { name: 'экоколлапс',    period: 500, drop: 1, dT: 5,   tau: 100, minStage: 4 },
+  // P0-5: ядерная война 1e3 → 1e5 лет + oncePerEpoch: раньше при ⏩ 1e9 лет (20000 шагов по 50000 лет)
+  // p=1-e^-50≈1 на каждом шаге → цивилизация гарантированно гибла, журнал забит «войной».
+  { name: 'ядерная война', period: 1e5, drop: 2, dT: 10,  tau: 100, minStage: 4, oncePerEpoch: true },
+  { name: 'экоколлапс',    period: 500, drop: 1, dT: 5,   tau: 100, minStage: 4, oncePerEpoch: true },
 ];
 
 const state = { bodies: [], selectedId: null, paused: false, speed: 1, simYears: 0, events: [], impacts: [],
@@ -573,6 +590,26 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 const scene = new THREE.Scene();
 scene.add(new THREE.AmbientLight(0x8892b0, 0.28));
+
+// З10: маркер выбора — ненавязчивый зелёный треугольник над выбранной планетой
+let _selMarker = null;
+{
+  _selMarker = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.045, 4),
+    new THREE.MeshBasicMaterial({ color: 0x35d435, transparent: true, opacity: 0.5, depthWrite: false }));
+  _selMarker.rotation.x = Math.PI; // остриё вниз
+  _selMarker.visible = false;
+  scene.add(_selMarker);
+}
+function updateSelMarker() {
+  if (!_selMarker) return;
+  const sel = state.bodies.find(b => b.id === state.selectedId);
+  if (sel && !sel.isStar && sel.mesh) {
+    _selMarker.visible = true;
+    const bob = 0.02 * Math.sin(performance.now() / 500);
+    const h = (sel.radius || 0.1) * 1.5 + 0.07 + bob;
+    _selMarker.position.set(sel.mesh.position.x, sel.mesh.position.y + h, sel.mesh.position.z);
+  } else _selMarker.visible = false;
+}
 const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 4000);
 camera.position.set(8, 6, 12);
 const controls = new OrbitControls(camera, canvas);
@@ -584,12 +621,12 @@ function initComposer() {
   const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600;
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.0, 0.6, 0.4);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.0, 0.85, 0.65); // Кино: мягкий ореол, порог повыше
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
 }
 initComposer();
-applyQuality('low');
+applyQuality('med'); // Кино: дефолт med — первое впечатление со свечением (было low — без блума)
 
 function makeStarfield() {
   const geo = new THREE.BufferGeometry();
@@ -983,6 +1020,7 @@ const PLANET_TEX = {
   jupiter: { type: 'bands', stops: [[0, '#b59070'], [0.07, '#a8876a'], [0.14, '#e8d5b5'], [0.22, '#c9a989'], [0.28, '#8a6a4c'], [0.34, '#e8d5b5'], [0.42, '#d8c0a0'], [0.48, '#b59070'], [0.55, '#e0ccae'], [0.62, '#a67c5a'], [0.68, '#c9a989'], [0.76, '#e8d5b5'], [0.84, '#c9a989'], [0.92, '#b59070'], [1, '#a8876a']], turb: 0.5, spot: { x: 0.68, y: 0.63, rx: 0.075, ry: 0.05, col: '#c05038', dark: '#8a3423' } },
   saturn:  { type: 'bands', stops: [[0, '#ab9460'], [0.1, '#f6e8c0'], [0.2, '#c6ae76'], [0.32, '#f6e8c0'], [0.45, '#c6ae76'], [0.58, '#f0e2b8'], [0.72, '#ab9460'], [0.85, '#e8d8a8'], [1, '#c6ae76']], turb: 0.35 },
   uranus:  { type: 'bands', stops: [[0, '#6fa8c2'], [0.25, '#a8dcec'], [0.5, '#d2f2fc'], [0.75, '#8ec6da'], [1, '#6fa8c2']], turb: 0.35 },
+  ice:     { type: 'rocky', hi: '#eaf3fb', lo: '#b4d0e4', craters: 70 }, // З11: ледяная текстура (f/g/h)
   neptune: { type: 'bands', stops: [[0, '#4265ab'], [0.2, '#7fa0e4'], [0.38, '#2c4c8a'], [0.55, '#6b8cd8'], [0.72, '#2a4680'], [0.88, '#7fa0e4'], [1, '#33558f']], turb: 0.5, spot: { x: 0.4, y: 0.55, rx: 0.055, ry: 0.04, col: '#1c2a5e', dark: '#131d40' } },
 };
 
@@ -1173,8 +1211,15 @@ function makeAtmosphere(b) {
 // === v3.0: кольцо обитаемой зоны (кольцо вокруг звезды, где возможна жидкая вода).
 // Границы — по T_eq = 273 K (внешняя) и T_eq = 373 K (внутренняя): D = R_sun/2 * (T_sun/T)^4.
 // Учитываем светимость текущей звезды (для пресетов TRAPPIST — зона сдвинута внутрь).
+// P0-7: используем state.starLum (сумма всех звёзд), а не star.starLum (одна звезда) —
+// для бинарной системы кольцо строилось по L=0.6 вместо честных 1.2.
+function recomputeStarLum() {
+  const stars = state.bodies.filter(b => b.isStar);
+  state.starLum = stars.reduce((s, b) => s + (b.starLum || 1), 0) || 1;
+  return state.starLum;
+}
 function makeHZRing(star) {
-  const L = star.starLum || 1.0;
+  const L = state.starLum || star.starLum || 1.0;
   // Границы в а.е. (для L☉): r = sqrt(L) * (T_eq/T_sun)^2 ... упрощаем по стандарту: 0.95..1.37 * sqrt(L)
   const rIn = 0.75 * Math.sqrt(L), rOut = 1.77 * Math.sqrt(L);
   const vIn = orbitVisR(rIn), vOut = orbitVisR(rOut);
@@ -1247,10 +1292,22 @@ function refreshElements(b) {
   if (e > 1e-8) _p.copy(_e).multiplyScalar(1 / e); else _p.copy(_r).multiplyScalar(1 / rm);
   _q.set(hy * _p.z - hz * _p.y, hz * _p.x - hx * _p.z, hx * _p.y - hy * _p.x);
   b._orb = { a, e, hx, hy, hz, px: _p.x, py: _p.y, pz: _p.z, qx: _q.x, qy: _q.y, qz: _q.z };
+  // P0-2: сохраняем среднюю аномалию M0 для честного Кеплер-дрейфа в быстрых режимах.
+  // Раньше advanceOrbitsAnalytic просто поворачивал текущий r вокруг h → радиус замораживался
+  // (эллипс превращался в окружность), комета вечно сидела в перигелии.
+  if (Number.isFinite(a) && a > 0 && e < 1) {
+    const cosE = (1 - rm / a) / Math.max(1e-9, e);
+    const sinE = rv / Math.max(1e-9, e * Math.sqrt(mu * a));
+    let E = Math.atan2(sinE, cosE);
+    b._orb.M0 = E - e * Math.sin(E); // M = E - e·sinE
+  } else {
+    b._orb.M0 = 0;
+  }
   if (Number.isFinite(a) && a > 0) { b.semiMajor = a; b.ecc = e; }
   else { b.semiMajor = rm; b.ecc = Math.min(e, 0.999); } // гипербола: климат по тек. расстоянию
 }
-const ORBIT_MAT = new THREE.LineBasicMaterial({ color: 0x3a5a7a, transparent: true, opacity: 0.3 });
+// З9: орбиты — серые пунктирные, менее заметные
+const ORBIT_MAT = new THREE.LineDashedMaterial({ color: 0x8a8f96, transparent: true, opacity: 0.18, dashSize: 0.5, gapSize: 0.4 });
 function refreshOrbitLine(b) {
   if (b.isStar) return;
   const star = getStar();
@@ -1275,6 +1332,7 @@ function refreshOrbitLine(b) {
   geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
   if (!b.orbitLine) { b.orbitLine = new THREE.Line(geo, ORBIT_MAT); scene.add(b.orbitLine); }
   else { b.orbitLine.geometry.dispose(); b.orbitLine.geometry = geo; b.orbitLine.visible = true; } // R3-08: без утечки
+  b.orbitLine.computeLineDistances(); // З9: пунктир требует lineDistance
 }
 function refreshAllOrbits() {
   for (const b of state.bodies) if (!b.isStar) { refreshElements(b); refreshOrbitLine(b); }
@@ -1302,25 +1360,61 @@ function recenterOnStar() {
   if (sx === 0 && sy === 0 && sz === 0) return;
   for (const b of state.bodies) { b.position.x -= sx; b.position.y -= sy; b.position.z -= sz; }
 }
-// R3-03: эволюционный режим крутит И позицию, И скорость вокруг вектора момента h.
-// Поворот вокруг Y (как было) ломал наклонные орбиты и возвращал в N-body несогласованный v.
+// P0-2/3: честный Кеплер-дрейф в быстрых режимах (×10⁴+) и в jumpYears.
+// Раньше код поворачивал текущий радиус-вектор вокруг оси момента h — поворот сохраняет
+// длину, поэтому эллипс превращался в окружность, а комета вечно сидела в перигелии.
+// Теперь храним M0 (средняя аномалия) в _orb и решаем уравнение Кеплера E - e·sinE = M.
+function keplerAdvance(b, dtYears, star) {
+  if (!b._orb) refreshElements(b);
+  const o = b._orb;
+  if (!o || !(o.a > 0) || o.e >= 1) return;
+  const mu = G * (star.mass + b.mass);
+  const n = Math.sqrt(mu / (o.a * o.a * o.a)); // среднее движение
+  const M = (o.M0 || 0) + n * dtYears;
+  // Решаем уравнение Кеплера (Ньютон, 7 итераций — достаточно для e<0.99)
+  let E = M;
+  for (let i = 0; i < 7; i++) E -= (E - o.e * Math.sin(E) - M) / (1 - o.e * Math.cos(E));
+  // Позиция в перифокусной системе: xp = a(cosE - e), yp = a√(1-e²)sinE
+  const xp = o.a * (Math.cos(E) - o.e);
+  const yp = o.a * Math.sqrt(1 - o.e * o.e) * Math.sin(E);
+  // Скорость: dE/dt = n/(1-e·cosE); v_xp = -a·sinE·dE/dt, v_yp = a√(1-e²)·cosE·dE/dt
+  const dEdt = n / (1 - o.e * Math.cos(E));
+  const vxp = -o.a * Math.sin(E) * dEdt;
+  const vyp = o.a * Math.sqrt(1 - o.e * o.e) * Math.cos(E) * dEdt;
+  // Перевод в инерциальную систему через базис (p̂, q̂) + позиция/скорость звезды
+  b.position.set(star.position.x + o.px * xp + o.qx * yp,
+                 star.position.y + o.py * xp + o.qy * yp,
+                 star.position.z + o.pz * xp + o.qz * yp);
+  b.velocity.set(star.velocity.x + o.px * vxp + o.qx * vyp,
+                 star.velocity.y + o.py * vxp + o.qy * vyp,
+                 star.velocity.z + o.pz * vxp + o.qz * vyp);
+  o.M0 = M % (Math.PI * 2); // обновляем среднюю аномалию для следующего шага
+}
+// P0-3: в быстрых режимах коллизй нет вообще → красный гигант никого не съедает.
+// Здесь поглощаем тела, чей перигей внутри звезды (для текущего радиуса звезды).
+function absorbEngulfed(star) {
+  if (!star) return;
+  const Rstar = star.realRadiusM / AU_M; // радиус звезды в а.е.
+  // Ф71: итерируем по копии — mergeBodies мутирует state.bodies (splice), и while-модификация
+  // коллекции во время for-of пропускала бы элементы после удалённого.
+  const snapshot = state.bodies.slice();
+  for (const b of snapshot) {
+    if (b.isStar) continue;
+    if (!state.bodies.includes(b)) continue; // уже поглощён в этом проходе
+    const perigee = (b._orb || b.semiMajor ? b.semiMajor * (1 - (b.ecc || 0)) : 0);
+    if (perigee > 0 && perigee < Rstar) {
+      mergeBodies(star, b); // перигей внутри звезды → поглощение
+    }
+  }
+}
 function advanceOrbitsAnalytic(dtYears) {
   const star = getStar();
   if (!star) return;
   for (const b of state.bodies) {
     if (b.isStar) continue;
-    if (!b._orb) refreshElements(b);
-    const o = b._orb;
-    if (!o || !(o.a > 0)) continue;
-    const n = Math.sqrt(G * star.mass / (o.a * o.a * o.a)); // III закон Кеплера, по каждой планете
-    const ang = (n * dtYears) % (Math.PI * 2);
-    _rel.subVectors(b.position, star.position);
-    rotateAroundAxis(_rel, o.hx, o.hy, o.hz, ang);
-    b.position.copy(star.position).add(_rel);
-    _vel.subVectors(b.velocity, star.velocity);
-    rotateAroundAxis(_vel, o.hx, o.hy, o.hz, ang);
-    b.velocity.copy(star.velocity).add(_vel);
+    keplerAdvance(b, dtYears, star);
   }
+  absorbEngulfed(star); // P0-3: красный гигант съедает планеты в быстрых режимах
 }
 
 // ============================================================================
@@ -1333,7 +1427,10 @@ function advanceOrbitsAnalytic(dtYears) {
 function visualRadiusM(realRadiusM, isStar) {
   // Ф46: видимые радиусы ближе к реальным отношениям — показатель 1/2 вместо 1/3:
   // Юпитер теперь 0.30 (3.3x Земли, было 0.20 — 2.2x), Сатурн 0.27, Уран/Нептун ~0.18.
-  // Звёзды — тот же показатель с k=0.23: Солнце 0.23, R=0.4 (M-карлик) -> 0.145, RG R=100 -> 2.3.
+  // Звёзды — тот же показатель с k=0.23: Солнце 0.23, R=0.4 (M-карлик) -> 0.145.
+  // P0-16: для красного гиганта используем orbitVisR (как в updateThermodynamics/applyStarType),
+  // иначе после перезагрузки радиус 2.3 (visualRadiusM) не совпадал с 2.05 (orbitVisR) в эволюции.
+  if (isStar && realRadiusM > R_SUN_M * 50) return orbitVisR(realRadiusM / AU_M);
   return isStar ? 0.23 * Math.sqrt(realRadiusM / R_SUN_M)
                 : 0.09 * Math.sqrt(realRadiusM / R_EARTH_M);
 }
@@ -1444,7 +1541,9 @@ function createBody(opts) {
     b.mesh.rotation.order = 'ZYX';
     if (b.axialTilt) { b.mesh.rotation.z = b.axialTilt; }
     // === v3.0: атмосферный ореол ===
-    if (b.atmPressure > 1e-3) { b.atmosphere = makeAtmosphere(b); if (b.atmosphere) b.mesh.add(b.atmosphere.mesh); }
+    // З8: светящийся ореол вокруг планет убран (лишает реализма). makeAtmosphere сохранена,
+    // физика атмосферы (давление, парник) от визуала не зависит.
+    b.atmosphere = null;
     // === v3.0: луны ===
     if (b.moons && b.moons.length) for (const m of b.moons) createMoonMesh(b, m);
     // === v3.4: кометные хвосты (ионный голубой + пылевой тёплый), видимы у льда/воды у звезды ===
@@ -1524,6 +1623,7 @@ const NAV = {
 };
 const NAV_CAM_NAMES = ['Орбитальный', 'Следящий', 'От 3-го лица', 'Кинематографический'];
 const NAV_CAM_FOVS = [45, 50, 65, 55];
+_navReady = true; // Кино: NAV определён — applyNavBloom/applyQuality теперь могут читать NAV.flying
 // v3.5: helpers — проекция экран-сцена (на плоскость эклиптики y≈0) и обратно
 const _navV = new THREE.Vector3();
 const _navP = new THREE.Vector3();
@@ -1607,44 +1707,255 @@ function makeWaypointTexture() {
 let _shipTex = null, _wpTex = null;
 function shipTex() { if (!_shipTex) _shipTex = makeShipTexture(); return _shipTex; }
 function wpTex() { if (!_wpTex) _wpTex = makeWaypointTexture(); return _wpTex; }
+// ===================== Ф74: КОРАБЛЬ «БОРЕЙ-1» — PBR-герой (по рецензии владельца) =====================
+// Контракт сохранён: userData.flames / sprite / baseScale / plasmaUniforms / engLight; нос +Z.
+function makeHullTexture() {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 512;
+  const x = c.getContext('2d');
+  x.fillStyle = '#cdd5dc'; x.fillRect(0, 0, 512, 512);
+  const rnd = mulberry32(42);
+  for (let i = 0; i < 14; i++) for (let j = 0; j < 6; j++) {
+    x.fillStyle = 'rgb(' + (180 + rnd() * 40 | 0) + ',' + (190 + rnd() * 40 | 0) + ',' + (200 + rnd() * 40 | 0) + ')';
+    x.fillRect(i * 38 + 1, j * 86 + 1, 36, 84);
+    x.strokeStyle = 'rgba(40,50,60,0.8)'; x.strokeRect(i * 38, j * 86, 38, 86);
+    for (let k = 0; k < 4; k++) { x.fillStyle = 'rgba(60,70,80,.7)'; // заклёпки
+      x.beginPath(); x.arc(i * 38 + 6 + rnd() * 26, j * 86 + 6 + rnd() * 74, 1.3, 0, 7); x.fill(); }
+  }
+  x.fillStyle = '#e8b83a'; // hazard-полосы у кормы
+  for (let i = 0; i < 16; i += 2) x.fillRect(i * 32, 470, 32, 42);
+  x.fillStyle = '#33414e'; x.font = 'bold 34px sans-serif';
+  x.fillText('БОРЕЙ-1', 150, 250);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function makeNavLights() {
+  const mk = (r, g2, b2) => {
+    const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+    const x = c.getContext('2d');
+    const grad = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+    grad.addColorStop(0, 'rgba(' + r + ',' + g2 + ',' + b2 + ',1)');
+    grad.addColorStop(0.4, 'rgba(' + r + ',' + g2 + ',' + b2 + ',0.5)');
+    grad.addColorStop(1, 'rgba(' + r + ',' + g2 + ',' + b2 + ',0)');
+    x.fillStyle = grad; x.fillRect(0, 0, 32, 32);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    sp.scale.setScalar(0.022);
+    return sp;
+  };
+  return [
+    { sp: mk(255, 60, 60) },  // левый борт — красный
+    { sp: mk(60, 255, 90) },  // правый борт — зелёный
+    { sp: mk(255, 255, 255), strobe: true }, // белый строб сверху
+  ];
+}
+// З12: камень — эллипсоид с вершинным шумом + процедурная текстура породы
+function makeRockGeo() {
+  const geo = new THREE.IcosahedronGeometry(1, 2);
+  const p = geo.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    v.multiplyScalar(1 + (Math.random() - 0.5) * 0.45);
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+function makeRockTex() {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+  const x = c.getContext('2d');
+  const rnd = mulberry32(11);
+  x.fillStyle = '#8d8377'; x.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 900; i++) {
+    const g3 = 110 + rnd() * 70 | 0;
+    x.fillStyle = 'rgba(' + g3 + ',' + (g3 - 6) + ',' + (g3 - 16) + ',0.5)';
+    x.fillRect(rnd() * 128, rnd() * 128, 2 + rnd() * 5, 2 + rnd() * 5);
+  }
+  for (let i = 0; i < 22; i++) {
+    const cx = rnd() * 128, cy = rnd() * 128, r = 3 + rnd() * 9;
+    const grad = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, 'rgba(52,46,40,0.55)');
+    grad.addColorStop(0.7, 'rgba(120,110,100,0.25)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = grad; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+// Ф74: частицы выхлопа — кольцевой буфер, цвет «белый → циан → угольки»
+const EXH = { n: 800, pos: null, vel: null, life: null, col: null, head: 0, points: null, geo: null, mat: null, tex: null };
+function makeSoftTex() {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.5, 'rgba(255,255,255,0.4)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+}
+function initExhaust() {
+  if (EXH.points) return;
+  const N = EXH.n;
+  EXH.pos = new Float32Array(N * 3); EXH.vel = new Float32Array(N * 3);
+  EXH.life = new Float32Array(N); EXH.col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) { EXH.pos[i * 3 + 1] = -9999; EXH.life[i] = 0; }
+  EXH.geo = new THREE.BufferGeometry();
+  EXH.geo.setAttribute('position', new THREE.BufferAttribute(EXH.pos, 3));
+  EXH.geo.setAttribute('color', new THREE.BufferAttribute(EXH.col, 3));
+  EXH.tex = makeSoftTex();
+  EXH.mat = new THREE.PointsMaterial({ size: 0.02, map: EXH.tex, vertexColors: true, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+  EXH.points = new THREE.Points(EXH.geo, EXH.mat);
+  EXH.points.frustumCulled = false;
+  EXH.points.visible = false;
+  scene.add(EXH.points);
+}
+function emitExhaust(shipPos, fwd, throttle, dt) {
+  initExhaust();
+  const count = Math.floor(throttle * (state.quality === 'low' ? 80 : 240) * dt);
+  for (let k = 0; k < count; k++) {
+    const i = EXH.head = (EXH.head + 1) % EXH.n, i3 = i * 3;
+    EXH.pos[i3] = shipPos.x; EXH.pos[i3 + 1] = shipPos.y; EXH.pos[i3 + 2] = shipPos.z;
+    const sp = 0.25 + 0.3 * throttle;
+    EXH.vel[i3] = -fwd.x * sp + (Math.random() - 0.5) * 0.05;
+    EXH.vel[i3 + 1] = -fwd.y * sp + (Math.random() - 0.5) * 0.05;
+    EXH.vel[i3 + 2] = -fwd.z * sp + (Math.random() - 0.5) * 0.05;
+    EXH.life[i] = 0.7 + Math.random() * 0.7;
+  }
+}
+function updateExhaust(dt) {
+  if (!EXH.points) return;
+  let any = false;
+  for (let i = 0; i < EXH.n; i++) {
+    if (EXH.life[i] <= 0) continue;
+    any = true;
+    const i3 = i * 3;
+    EXH.pos[i3] += EXH.vel[i3] * dt; EXH.pos[i3 + 1] += EXH.vel[i3 + 1] * dt; EXH.pos[i3 + 2] += EXH.vel[i3 + 2] * dt;
+    EXH.vel[i3] *= 0.98; EXH.vel[i3 + 1] *= 0.98; EXH.vel[i3 + 2] *= 0.98;
+    EXH.life[i] -= dt;
+    const l = Math.max(0, EXH.life[i]);
+    if (l > 0.7) { EXH.col[i3] = 1; EXH.col[i3 + 1] = 1; EXH.col[i3 + 2] = 1; }
+    else if (l > 0.3) { EXH.col[i3] = 0.4; EXH.col[i3 + 1] = 0.8; EXH.col[i3 + 2] = 1; }
+    else { const k = l / 0.3; EXH.col[i3] = k; EXH.col[i3 + 1] = 0.5 * k; EXH.col[i3 + 2] = 0.2 * k; }
+  }
+  EXH.geo.attributes.position.needsUpdate = true;
+  EXH.geo.attributes.color.needsUpdate = true;
+  EXH.points.visible = any;
+}
+// Ф74: камера-риг с инерцией, креном и тряской (пружина вместо snap)
+const RIG = { pos: null, tgt: null, roll: 0, shake: 0, prevFwd: null, init: false };
+function chaseCam(dt, ship, fwd, throttle, mode) {
+  if (!RIG.init) { RIG.pos = new THREE.Vector3(); RIG.tgt = new THREE.Vector3(); RIG.prevFwd = fwd.clone(); RIG.init = true; }
+  const boost = NAV._boostK || 0;
+  let desired, tgt;
+  if (mode === 1) { // следящий: сбоку-сверху
+    const side = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    desired = ship.position.clone().addScaledVector(side, 0.55).add(new THREE.Vector3(0, 0.38, 0));
+    tgt = ship.position.clone().addScaledVector(fwd, 0.3).add(new THREE.Vector3(0, -0.05, 0));
+  } else { // 3-е лицо: позади корабля, отстаёт при разгоне
+    desired = ship.position.clone().addScaledVector(fwd, -(0.16 + 0.06 * throttle)).add(new THREE.Vector3(0, 0.05, 0));
+    tgt = ship.position.clone().addScaledVector(fwd, 0.4);
+  }
+  RIG.pos.lerp(desired, 1 - Math.exp(-dt / 0.12));
+  RIG.tgt.lerp(tgt, 1 - Math.exp(-dt / 0.07));
+  const cr = new THREE.Vector3().crossVectors(RIG.prevFwd, fwd);
+  RIG.roll += ((mode === 2 ? Math.max(-0.4, Math.min(0.4, -cr.y * 40)) : 0) - RIG.roll) * (1 - Math.exp(-dt / 0.2));
+  RIG.prevFwd.copy(fwd);
+  RIG.shake = Math.max(RIG.shake * Math.exp(-dt / 0.25), throttle * 0.0015 + boost * 0.006);
+  const t = performance.now() / 1000;
+  camera.position.copy(RIG.pos).add(new THREE.Vector3(
+    Math.sin(t * 37) * RIG.shake, Math.sin(t * 29 + 1) * RIG.shake, Math.sin(t * 31 + 2) * RIG.shake));
+  camera.lookAt(RIG.tgt);
+  camera.rotateZ(RIG.roll);
+  const fovBase = NAV_CAM_FOVS[NAV.camMode] || 55;
+  const nf = fovBase + 14 * Math.min(1, NAV.flySpeed / 0.05) + 8 * boost;
+  if (Math.abs(camera.fov - nf) > 0.05) { camera.fov = nf; camera.updateProjectionMatrix(); }
+}
+const _navTargetQuat = new THREE.Quaternion();
+const _Q_Y180 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 function makeShipMesh() {
-  // Б6: детализированный корабль для вида от 3-го лица. Ориентация: нос +Z (вперёд по пути).
   const g = new THREE.Group();
-  // корпус — вытянутый конус
-  const hullGeo = new THREE.ConeGeometry(0.018, 0.07, 12);
-  const hullMat = new THREE.MeshBasicMaterial({ color: 0xdfe9f5 });
-  const hull = new THREE.Mesh(hullGeo, hullMat);
-  hull.rotation.x = Math.PI / 2; // конус смотрит +Z
-  g.add(hull);
-  // кабина — голубой купол
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 8, 0, Math.PI*2, 0, Math.PI/2),
-    new THREE.MeshBasicMaterial({ color: 0x37dcf2, transparent: true, opacity: 0.85 }));
-  cockpit.position.set(0, 0.006, 0.008); g.add(cockpit);
-  // солнечные панели-крылья
-  const panelMat = new THREE.MeshBasicMaterial({ color: 0x2a4a7a, side: THREE.DoubleSide });
-  const panelGeo = new THREE.PlaneGeometry(0.06, 0.018);
-  const lp = new THREE.Mesh(panelGeo, panelMat); lp.position.set(-0.035, 0, 0); g.add(lp);
-  const rp = new THREE.Mesh(panelGeo, panelMat); rp.position.set(0.035, 0, 0); g.add(rp);
-  // двигатели — два цилиндра сзади
-  const engMat = new THREE.MeshBasicMaterial({ color: 0x666666 });
-  const engGeo = new THREE.CylinderGeometry(0.006, 0.006, 0.02, 8);
-  const le = new THREE.Mesh(engGeo, engMat); le.rotation.x = Math.PI/2; le.position.set(-0.01, 0, -0.04); g.add(le);
-  const re = new THREE.Mesh(engGeo, engMat); re.rotation.x = Math.PI/2; re.position.set(0.01, 0, -0.04); g.add(re);
-  // выхлоп — additive-конусы
-  const flameMat = new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false });
-  const flameGeo = new THREE.ConeGeometry(0.005, 0.025, 8, 1, true);
-  const lf = new THREE.Mesh(flameGeo, flameMat); lf.rotation.x = -Math.PI/2; lf.position.set(-0.01, 0, -0.055); g.add(lf);
-  const rf = new THREE.Mesh(flameGeo, flameMat); rf.rotation.x = -Math.PI/2; rf.position.set(0.01, 0, -0.055); g.add(rf);
-  g.userData.flames = [lf, rf];
-  g.userData.hull = hull;
-  // спрайт-иконка для орбитального вида (вид сверху)
+  const hullTex = makeHullTexture();
+  NAV._hullTex = hullTex;
+  const mat = new THREE.MeshStandardMaterial({ map: hullTex, bumpMap: hullTex, bumpScale: 0.02,
+    metalness: 0.85, roughness: 0.35 });
+  // корпус — гладкий Lathe: нос → цилиндр → корма («метры», группа масштабируется 0.07)
+  const prof = [[0, 0], [0.10, 0.06], [0.16, 0.22], [0.18, 0.55], [0.16, 0.80], [0.13, 0.92], [0.15, 1.0]]
+    .map(p => new THREE.Vector2(p[0], p[1]));
+  const hull = new THREE.Mesh(new THREE.LatheGeometry(prof, 24), mat);
+  hull.rotation.x = Math.PI / 2; hull.position.z = 0.5; g.add(hull);
+  // сопло-колокол (латунь) — светится от тяги
+  const bell = new THREE.Mesh(new THREE.LatheGeometry(
+    [[0.09, 0], [0.07, 0.06], [0.11, 0.16], [0.13, 0.22]].map(p => new THREE.Vector2(p[0], p[1])), 20),
+    new THREE.MeshStandardMaterial({ color: 0x8a6a3a, metalness: 1, roughness: 0.28,
+      emissive: 0xff5a00, emissiveIntensity: 0.0 }));
+  bell.rotation.x = -Math.PI / 2; bell.position.z = -0.52; g.add(bell);
+  g.userData.bell = bell;
+  // greebles — 40 деталей одним InstancedMesh
+  const gr = new THREE.InstancedMesh(new THREE.BoxGeometry(0.05, 0.03, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x9aa4ad, metalness: 0.9, roughness: 0.5 }), 40);
+  const M4 = new THREE.Matrix4(), rnd = mulberry32(7);
+  for (let i = 0; i < 40; i++) {
+    const a = rnd() * Math.PI * 2, z = (rnd() - 0.5) * 0.8, r = 0.17;
+    M4.makeRotationZ(a); M4.setPosition(Math.cos(a) * r, Math.sin(a) * r, z);
+    gr.setMatrixAt(i, M4);
+  }
+  g.add(gr);
+  // ходовые огни
+  const nl = makeNavLights();
+  NAV._navLights = nl;
+  nl[0].sp.position.set(-0.18, 0, 0.35); nl[1].sp.position.set(0.18, 0, 0.35);
+  nl[2].sp.position.set(0, 0.22, 0.2);
+  for (const n of nl) g.add(n.sp);
+  // свет двигателей
+  const eng = new THREE.PointLight(0x7fd4ff, 0, 0.9, 2); eng.position.z = -0.6; g.add(eng);
+  g.userData.engLight = eng;
+  // шейдерный факел: ядро бело-голубое → оранж на форсаже, турбулентность, ×3 для bloom
+  const plumeMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: { uTime: { value: 0 }, uThrottle: { value: 0 }, uBoost: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader: [
+      'uniform float uTime,uThrottle,uBoost; varying vec2 vUv;',
+      'float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }',
+      'float n(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);',
+      '  return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y); }',
+      'void main(){',
+      '  float y = 1.0 - vUv.y;',
+      '  float turb = n(vec2(y*7.0 - uTime*14.0, vUv.x*4.0))*0.5',
+      '           + n(vec2(y*16.0 - uTime*26.0, vUv.x*9.0))*0.25;',
+      '  float core = smoothstep(0.5, 0.05, abs(vUv.x-0.5));',
+      '  float diamonds = 0.6 + 0.4*sin(y*46.0 - uTime*30.0);',
+      '  float body = pow(1.0-y, 1.4) * (0.7+0.5*turb);',
+      '  vec3 hot = mix(vec3(1.0,0.97,0.9), vec3(0.35,0.75,1.0), y);',
+      '  hot = mix(hot, vec3(1.0,0.55,0.15), uBoost);',
+      '  float a = body*core*diamonds*max(0.12, uThrottle);',
+      '  gl_FragColor = vec4(hot*a*3.0, a);',
+      '}'
+    ].join('\n')
+  });
+  NAV._plumeMat = plumeMat;
+  const plumeGeo = new THREE.ConeGeometry(0.5, 1, 16, 4, true);
+  plumeGeo.rotateX(Math.PI / 2); // узкая вершина на +Z — у сопла
+  const pl1 = new THREE.Mesh(plumeGeo, plumeMat); pl1.position.set(-0.12, 0, -0.62);
+  const pl2 = new THREE.Mesh(plumeGeo, plumeMat); pl2.position.set(0.12, 0, -0.62);
+  g.add(pl1); g.add(pl2);
+  g.userData.flames = [pl1, pl2];
+  g.userData.plasmaUniforms = plumeMat.uniforms; // контракт сохранён
+  // спрайт-иконка (вид сверху)
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: shipTex(), transparent: true, opacity: 0.0, depthWrite: false }));
   sp.scale.setScalar(0.06); g.add(sp);
   g.userData.sprite = sp;
   g.userData.baseScale = 1;
+  g.scale.setScalar(0.07);
   return g;
 }
-function addWaypointMesh(pos, idx) {
+function buildNavCurve() {
+  const startB = NAV.fromBody;
+  const startP = startB ? (startB.isStar ? startB.position : visPos(startB.position, startB.semiMajor)) : NAV.wp[0];
+  const pts = [startP.clone(), ...NAV.wp.map(w => w.clone())];
+  return new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
+}
+
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: wpTex(), transparent: true, depthWrite: false }));
   sp.scale.setScalar(0.09); sp.position.copy(pos); sp.position.y = 0.05;
   scene.add(sp);
@@ -1678,7 +1989,7 @@ function rebuildPath() {
   pts.push(startP.clone());
   for (const w of NAV.wp) pts.push(w.clone());
   // Catmull-Rom сглаживание
-  const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
+  const curve = NAV._curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5); // Ф77: кэш — не пересоздаём каждый кадр
   const N = Math.max(64, pts.length * 24);
   const positions = new Float32Array(N * 3);
   const colors = new Float32Array(N * 3);
@@ -1761,10 +2072,13 @@ function updateNavHud() {
   if (el('nh-cam-label')) el('nh-cam-label').textContent = NAV_CAM_NAMES[NAV.camMode||0];
   document.querySelectorAll('.nh-cam').forEach((b, i) => b.classList.toggle('active', i === (NAV.camMode||0)));
 }
-function navShowToast(msg, dur) {
+function navShowToast(msg, dur, asHtml) {
   const el = document.getElementById('nav-toast');
   if (!el) return;
-  el.textContent = msg; el.classList.add('show');
+  // Ф72: asHtml (3-й аргумент) — для тостов со встроенной разметкой (undo-ссылка).
+  // Раньше всегда textContent → <a> выводился как сырой текст.
+  if (asHtml) el.innerHTML = msg; else el.textContent = msg;
+  el.classList.add('show');
   clearTimeout(NAV._toastT);
   NAV._toastT = setTimeout(() => el.classList.remove('show'), dur || 2500);
 }
@@ -1801,7 +2115,9 @@ function exitNavMode() {
   document.getElementById('nav-popup').classList.remove('show');
   clearNavRoute();
   if (NAV.ship) { scene.remove(NAV.ship); NAV.ship = null; }
-  if (NAV.shipTrail) { scene.remove(NAV.shipTrail); NAV.shipTrail.geometry.dispose(); disposeMaterial(NAV.shipTrail.material); NAV.shipTrail = null; }
+  if (NAV.shipTrail) { scene.remove(NAV.shipTrail); NAV.shipTrail.geometry.dispose(); disposeMaterial(NAV.shipTrail.material); NAV.shipTrail = null; NAV._ribbonGeo = null; NAV._ribbonMat = null; }
+  if (EXH.points) { EXH.points.visible = false; } // Ф74: частицы выхлопа гасим
+  if (NAV._hullTex) { NAV._hullTex.dispose(); NAV._hullTex = null; }
   NAV.trailPos.length = 0;
   clearNavSignal(); // Ф57: освобождаем кольца радиосигнала
   // Б4: восстановим прежнее состояние паузы (если до входа не было паузы — снимем)
@@ -1881,21 +2197,60 @@ function startFlight() {
   NAV.alive = true; NAV.deathReason = null; NAV.health = 100; // Б5+Ф59: жив, корпус восстановлен
   // Ф59: без сброса health после гибели следующий полёт умирал на первом же кадре
   if (!NAV.ship) { NAV.ship = makeShipMesh(); scene.add(NAV.ship); }
+  NAV._throttle = 0; NAV._prevSpeed = null; NAV._boostK = 0; NAV._curve = null; RIG.init = false; // Ф74
   const startB = NAV.fromBody;
   const startP = startB ? (startB.isStar ? startB.position : visPos(startB.position, startB.semiMajor)) : NAV.wp[0];
   NAV.ship.position.copy(startP);
-  // след
-  const tg = new THREE.BufferGeometry();
-  tg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(300 * 3), 3));
-  const tm = new THREE.PointsMaterial({ color: 0x9fc8ff, size: 0.018, transparent: true, opacity: 0.7, sizeAttenuation: true, blending: THREE.AdditiveBlending, depthWrite: false });
-  NAV.shipTrail = new THREE.Points(tg, tm); scene.add(NAV.shipTrail);
+  // Ф76: след корабля — лента, развёрнутая к камере (256 сэмплов × 2 вершины), затухание к хвосту
+  const RIB_N = 256;
+  const rg = new THREE.BufferGeometry();
+  const rpos = new Float32Array(RIB_N * 2 * 3);
+  const rtan = new Float32Array(RIB_N * 2 * 3);
+  const rside = new Float32Array(RIB_N * 2);
+  const rage = new Float32Array(RIB_N * 2);
+  for (let i = 0; i < RIB_N; i++) { rside[i * 2] = -1; rside[i * 2 + 1] = 1; }
+  rg.setAttribute('position', new THREE.BufferAttribute(rpos, 3));
+  rg.setAttribute('aTangent', new THREE.BufferAttribute(rtan, 3));
+  rg.setAttribute('aSide', new THREE.BufferAttribute(rside, 1));
+  rg.setAttribute('aAge', new THREE.BufferAttribute(rage, 1));
+  const trailMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uWidth: { value: 0.014 } },
+    vertexShader: [
+      'attribute vec3 aTangent; attribute float aSide, aAge; uniform float uWidth; varying float vAge;',
+      'void main(){',
+      '  vec4 wp = modelMatrix * vec4(position, 1.0);',
+      '  vec3 view = normalize(cameraPosition - wp.xyz);',
+      '  vec3 side = normalize(cross(aTangent, view));',
+      '  wp.xyz += side * uWidth * (1.0 - aAge) * aSide;',
+      '  vAge = aAge;',
+      '  gl_Position = projectionMatrix * viewMatrix * wp;',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'varying float vAge;',
+      'void main(){',
+      '  vec3 c = mix(vec3(0.5,0.85,1.0), vec3(0.1,0.2,0.5), vAge);',
+      '  float a = pow(1.0 - vAge, 2.0) * 0.6;',
+      '  gl_FragColor = vec4(c * a * 2.0, a);',
+      '}'
+    ].join('\n')
+  });
+  const trailMesh = new THREE.Mesh(rg, trailMat);
+  trailMesh.frustumCulled = false;
+  NAV.shipTrail = trailMesh; scene.add(NAV.shipTrail);
+  NAV._ribbonRing = new Float32Array(RIB_N * 3); NAV._ribbonHead = 0; NAV._ribbonN = RIB_N;
+  NAV._ribbonGeo = rg; NAV._ribbonMat = trailMat;
+  const sp0 = NAV.ship.position;
+  for (let i = 0; i < RIB_N; i++) { NAV._ribbonRing[i * 3] = sp0.x; NAV._ribbonRing[i * 3 + 1] = sp0.y; NAV._ribbonRing[i * 3 + 2] = sp0.z; }
   // Б4: снимаем паузу — сцена движется, но медленно (navSlow=0.04 в simulate).
   // Гравипрыжок возможен только при медленных планетах: корабль успевает пройти
   // зону влияния массивного тела, пока оно почти стоит на месте.
   setPaused(false);
   setNavCamMode(NAV.camMode || 1); // Б6: при старте — следящая камера
   spawnFlightDebris(); // Б7: астероиды/объекты для близкого вида
-  logEvent('�️ Корабль стартовал с ' + (startB ? startB.name : '—') + ' — пункт назначения: веха #' + NAV.wp.length);
+  applyNavBloom(); // Кино: при полёте — усиленный bloom (выхлоп/след/кристаллы)
+  logEvent('🚀 Корабль стартовал с ' + (startB ? startB.name : '—') + ' — пункт назначения: веха #' + NAV.wp.length);
   updateNavHud();
   navShowToast('🚀 Полёт! Время замедлено. Камера: ' + NAV_CAM_NAMES[NAV.camMode||1] + ' (клавиша V — смена). Δv ' + NAV.dvBudget.toFixed(1) + ' км/с', 4000);
 }
@@ -1959,17 +2314,15 @@ function updateNavSignal(dt) {
 function updateNavFlight(dt) {
   if (!NAV.flying || !NAV.ship) return;
   if (!NAV.alive) { return; } // Б5: корабль погиб — полёт остановлен
-  // строим кривую (старт + вехи), двигаемся по ней по суммарной длине
-  const startB = NAV.fromBody;
-  const startP = startB ? (startB.isStar ? startB.position : visPos(startB.position, startB.semiMajor)) : NAV.wp[0];
-  const pts = [startP.clone(), ...NAV.wp.map(w => w.clone())];
-  const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
+  // строим кривую (старт + вехи) — из кэша (Ф77), не пересоздаём каждый кадр
+  const curve = NAV._curve || (NAV._curve = buildNavCurve());
   NAV.flyT += NAV.flySpeed * dt;
   NAV.flyElapsed += dt;
     if (NAV.flyT >= 1) {
       // прибытие
       NAV.flyT = 1;
       NAV.flying = false;
+      applyNavBloom(); // Кино: возврат к обычному bloom после полёта
       const dest = NAV.wp[NAV.wp.length - 1].clone();
       NAV.ship.position.copy(curve.getPointAt(1));
       NAV.score += 1000; // Б7: бонус за прибытие
@@ -2008,25 +2361,36 @@ function updateNavFlight(dt) {
     dir.normalize();
     const up = new THREE.Vector3(0, 1, 0);
     const m = new THREE.Matrix4().lookAt(p, p.clone().add(dir), up);
-    NAV.ship.quaternion.setFromRotationMatrix(m);
-    // коррекция: lookAt даёт -Z вперёд, а наш корабль смотрит +Z — развернём на 180°
-    NAV.ship.rotateY(Math.PI);
+    _navTargetQuat.setFromRotationMatrix(m);
+    _navTargetQuat.multiply(_Q_Y180); // нос +Z (lookAt даёт -Z вперёд)
+    NAV.ship.quaternion.slerp(_navTargetQuat, Math.min(1, 1 - Math.exp(-dt / 0.15))); // Ф75: без дёрганья
   }
-  // анимация выхлопа
-  if (NAV.ship.userData.flames) {
-    const f = 1 + 0.3 * Math.sin(NAV.flyElapsed * 30);
-    for (const fl of NAV.ship.userData.flames) fl.scale.z = f;
+  // Ф74: выхлоп/тяга/след — обрабатываются ниже (после расчёта гравипрыжка)
+  // Ф76: след — лента, развёрнутая к камере (кольцевой буфер)
+  {
+    const N = NAV._ribbonN || 256, ring = NAV._ribbonRing, old = NAV._ribbonHead;
+    ring[old * 3] = p.x; ring[old * 3 + 1] = p.y; ring[old * 3 + 2] = p.z;
+    const head = (old + 1) % N; NAV._ribbonHead = head;
+    const rp = NAV._ribbonGeo.attributes.position.array;
+    const rt = NAV._ribbonGeo.attributes.aTangent.array;
+    const ra = NAV._ribbonGeo.attributes.aAge.array;
+    for (let i = 0; i < N; i++) {
+      const idx = (head - 1 - i + N * 2) % N;       // i=0 — свежайшая (у корабля)
+      const idxOld = (idx + 1) % N;                  // сосед старее
+      const bx = ring[idx * 3], by = ring[idx * 3 + 1], bz = ring[idx * 3 + 2];
+      rp[idx * 6] = bx; rp[idx * 6 + 1] = by; rp[idx * 6 + 2] = bz;
+      rp[idx * 6 + 3] = bx; rp[idx * 6 + 4] = by; rp[idx * 6 + 5] = bz;
+      const dx = bx - ring[idxOld * 3], dy = by - ring[idxOld * 3 + 1], dz = bz - ring[idxOld * 3 + 2];
+      const dl = Math.hypot(dx, dy, dz) || 1;
+      rt[idx * 6] = dx / dl; rt[idx * 6 + 1] = dy / dl; rt[idx * 6 + 2] = dz / dl;
+      rt[idx * 6 + 3] = dx / dl; rt[idx * 6 + 4] = dy / dl; rt[idx * 6 + 5] = dz / dl;
+      const age = i / (N - 1);
+      ra[idx * 2] = age; ra[idx * 2 + 1] = age;
+    }
+    NAV._ribbonGeo.attributes.position.needsUpdate = true;
+    NAV._ribbonGeo.attributes.aTangent.needsUpdate = true;
+    NAV._ribbonGeo.attributes.aAge.needsUpdate = true;
   }
-  // след
-  NAV.trailPos.push(p.clone());
-  if (NAV.trailPos.length > 300) NAV.trailPos.shift();
-  const ta = NAV.shipTrail.geometry.attributes.position.array;
-  for (let i = 0; i < 300; i++) {
-    const idx = NAV.trailPos.length - 1 - i;
-    if (idx >= 0) { ta[i*3] = NAV.trailPos[idx].x; ta[i*3+1] = NAV.trailPos[idx].y; ta[i*3+2] = NAV.trailPos[idx].z; }
-    else { ta[i*3] = 0; ta[i*3+1] = -9999; ta[i*3+2] = 0; }
-  }
-  NAV.shipTrail.geometry.attributes.position.needsUpdate = true;
   // ускорение у гравипрыжка: проверяем близость к массивному телу
   const sg = slingshotGain(p, curve.getPointAt(Math.min(1, NAV.flyT + 0.02)));
   if (sg.gain > 0.05) {
@@ -2039,8 +2403,31 @@ function updateNavFlight(dt) {
     NAV.flySpeed += (cr - NAV.flySpeed) * Math.min(1, dt * 2);
     if (NAV.flySpeed < 0.004) NAV.flySpeed = 0.004;
   }
+  // Ф74: тяга по ускорению — факел дышит вместе с манёврами; гравипрыжок = форсаж
+  const accel = (NAV.flySpeed - (NAV._prevSpeed ?? NAV.flySpeed)) / Math.max(dt, 1e-4);
+  NAV._prevSpeed = NAV.flySpeed;
+  NAV._boostK = (NAV._boostK || 0) + ((sg.gain > 0.05 ? 1 : 0) - (NAV._boostK || 0)) * Math.min(1, dt * 5);
+  const thrTarget = Math.min(1, Math.max(0, 0.35 + accel * 8 + (sg.gain > 0.05 ? 0.6 : 0)));
+  NAV._throttle = (NAV._throttle || 0) + (thrTarget - NAV._throttle) * Math.min(1, dt * 8);
+  const u = NAV.ship.userData.plasmaUniforms;
+  if (u) { u.uTime.value = NAV.flyElapsed; u.uThrottle.value = NAV._throttle; u.uBoost.value = NAV._boostK; }
+  for (const fl of NAV.ship.userData.flames) {
+    fl.scale.z = (0.6 + 0.9 * NAV._throttle) * (0.85 + 0.3 * Math.sin(NAV.flyElapsed * 30));
+    fl.scale.x = fl.scale.y = 0.5 + 0.7 * NAV._throttle;
+    fl.position.z = -0.62 + 0.5 * fl.scale.z; // узкая точка держится у сопла при любой длине
+  }
+  if (NAV.ship.userData.engLight) {
+    NAV.ship.userData.engLight.intensity = 2.5 * NAV._throttle * (0.85 + 0.3 * Math.random()) * (1 + NAV._boostK);
+    NAV.ship.userData.engLight.color.setHex(NAV._boostK > 0.5 ? 0xff8844 : 0x7fd4ff);
+  }
+  if (NAV.ship.userData.bell) NAV.ship.userData.bell.material.emissiveIntensity = NAV._throttle * 1.4;
+  if (NAV._navLights) for (const n of NAV._navLights) {
+    n.sp.material.opacity = n.strobe ? (Math.sin(NAV.flyElapsed * 4) > 0.7 ? 1 : 0.08) : 0.85;
+  }
+  emitExhaust(p, dir, NAV._throttle, dt);
+  updateExhaust(dt);
   // === Б5: проверки выживания ===
-  checkShipSurvival(p, dir || new THREE.Vector3());
+  checkShipSurvival(p, dir || new THREE.Vector3(), dt);
   if (!NAV.alive) { return; }
   // Б7: сбор бонусов
   checkCollectibles(p);
@@ -2055,7 +2442,7 @@ function updateNavFlight(dt) {
   const elFT = document.getElementById('nh-time');
   if (elFT) elFT.textContent = Math.floor(NAV.flyElapsed / 60) + ':' + String(Math.floor(NAV.flyElapsed % 60)).padStart(2, '0');
   const elVel = document.getElementById('nh-speed');
-  if (elVel) elVel.textContent = fmtSpeedKms(NAV._vKms || 0);
+  if (elVel) elVel.textContent = fmtSpeedThKmh(NAV._vKms || 0); // З15
   const elH = document.getElementById('nh-health');
   if (elH) elH.textContent = Math.round(NAV.health) + '%';
   const elS = document.getElementById('nh-score');
@@ -2065,8 +2452,9 @@ function updateNavFlight(dt) {
 //  Б5: ВЫЖИВАНИЕ КОРАБЛЯ. Проверки каждый кадр: сгорел у звезды, разбился о
 //  планету, улетел вникуда (вышел за границу системы / пропустил гравипрыжок).
 // ============================================================================
-function checkShipSurvival(pos, dir) {
+function checkShipSurvival(pos, dir, dt) {
   if (!NAV.alive) return;
+  const dts = Math.max(0.001, dt); // P0-15: раньше было фиксированное 0.016 (60 fps) — урон не зависел от реального dt
   const star = getStar();
   // 1) Сгорел у Солнца — слишком близко к звезде (в визуальных единицах)
   if (star) {
@@ -2085,7 +2473,7 @@ function checkShipSurvival(pos, dir) {
     if (d < hitR) { killShip('💥 Разбился о поверхность ' + (b.name||'планеты')); return; }
     // перегрев от близкого пролёта (атмосфера/излучение) — лёгкий урон
     if (d < hitR * 2.2 && b.isStar === false && b.radius > 0.15) {
-      NAV.health = Math.max(0, NAV.health - 8 * 0.016);
+      NAV.health = Math.max(0, NAV.health - 8 * dts);
     }
   }
   // 3) Ушёл вникуда — вышел за границу системы
@@ -2095,13 +2483,15 @@ function checkShipSurvival(pos, dir) {
   //    штрафуем здоровьем (имитация «увода с курса без ассиста»).
   // Проверяем: если путь длиннее ожидаемого (корабль «болтается»), снижаем прочность.
   if (NAV.flySpeed < 0.09 && NAV.flyElapsed > 5) {
-    NAV.health = Math.max(0, NAV.health - 2 * 0.016); // медленный дрейф = перерасход топлива
+    NAV.health = Math.max(0, NAV.health - 2 * dts); // медленный дрейф = перерасход топлива
   }
   if (NAV.health <= 0) { killShip('💔 Корпус разрушен — закончилось топливо/прочность'); return; }
 }
 function killShip(reason) {
   if (!NAV.alive) return;
   NAV.alive = false; NAV.flying = false; NAV.deathReason = reason;
+  applyNavBloom(); // Кино: возврат к обычному bloom после гибели
+  NAV._throttle = 0; // Ф74: факел гаснет
   // взрыв: переиспользуем spawnImpact (если есть)
   if (typeof spawnImpact === 'function') spawnImpact(NAV.ship.position.clone(), 0.4);
   // тост
@@ -2150,7 +2540,7 @@ function setNavCamMode(mode) {
   }
   // детализированный корпус виден только в видах 1/2
   if (NAV.ship) {
-    NAV.ship.children.forEach((c, i) => { if (i > 0 || true) c.visible = mode !== 0 ? true : true; });
+    NAV.ship.children.forEach((c, i) => { if (i) c.visible = true; }); // Ф74: мёртвое условие убрано
   }
   // кнопки в HUD
   document.querySelectorAll('.nh-cam').forEach((b, i) => b.classList.toggle('active', i === mode));
@@ -2161,29 +2551,22 @@ function updateNavCamera(dt, dir) {
   if (!NAV.ship || NAV.camMode === 0) return;
   const sp = NAV.ship.position;
   const d = dir.clone().normalize();
-  if (NAV.camMode === 1) {
-    // Следящий: камера сбоку-сверху, взгляд в одну сторону (вдоль направления полёта),
-    // виден корабль и след. Смещение: перпендикулярно направлению + вверх.
-    const side = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0,1,0)).normalize();
-    const offset = side.multiplyScalar(0.5).add(new THREE.Vector3(0, 0.35, 0));
-    const target = sp.clone().add(offset);
-    camera.position.lerp(target, 1 - Math.pow(0.001, dt));
-    // взгляд — вперёд по направлению полёта, чуть вниз
-    const lookAt = sp.clone().add(d.clone().multiplyScalar(0.3)).add(new THREE.Vector3(0, -0.05, 0));
-    camera.lookAt(lookAt);
-  } else if (NAV.camMode === 2) {
-    // Вид от 3-го лица: вплотную позади корабля, чуть выше
-    const back = d.clone().multiplyScalar(-0.18);
-    const up = new THREE.Vector3(0, 0.06, 0);
-    const target = sp.clone().add(back).add(up);
-    camera.position.lerp(target, 1 - Math.pow(0.0001, dt));
-    camera.lookAt(sp.clone().add(d.clone().multiplyScalar(0.5)));
+  // Кино: лёгкое расширение FOV при разгоне (гравипрыжок) — эффект скорости, как в кино
+  const speedBoost = (NAV.flySpeed - 0.08) * 0.4; // до ~0.15 при прыжке
+  const fovBase = NAV_CAM_FOVS[NAV.camMode];
+  if (Math.abs(camera.fov - (fovBase + speedBoost)) > 0.05) {
+    camera.fov = fovBase + speedBoost;
+    camera.updateProjectionMatrix();
+  }
+  if (NAV.camMode === 1 || NAV.camMode === 2) {
+    // Ф74: оба следящих режима — на камере-риге с пружиной, креном и тряской
+    chaseCam(dt, NAV.ship, d, NAV._throttle || 0, NAV.camMode);
   } else if (NAV.camMode === 3) {
     // Ф63: кинематографическая камера — медленный облёт корабля; drag — «оглядываться»
     NAV._cinT = (NAV._cinT || 0) + dt;
     const yaw = NAV._cinT * 0.1 + (NAV._cinYawOff || 0);
     const pit = 0.3 + (NAV._cinPitchOff || 0);
-    const off = new THREE.Vector3(Math.cos(yaw) * Math.cos(pit), Math.sin(pit), Math.sin(yaw) * Math.cos(pit)).multiplyScalar(0.3);
+    const off = new THREE.Vector3(Math.cos(yaw) * Math.cos(pit), Math.sin(pit), Math.sin(yaw) * Math.cos(pit)).multiplyScalar(0.45);
     camera.position.lerp(sp.clone().add(off), 1 - Math.pow(0.002, dt));
     camera.lookAt(sp.clone().add(d.clone().multiplyScalar(0.25)));
     NAV._cinYawOff = (NAV._cinYawOff || 0) * Math.pow(0.75, dt);
@@ -2253,24 +2636,30 @@ function spawnFlightDebris() {
   const dm = new THREE.PointsMaterial({ size: 0.012, vertexColors: true, transparent: true, opacity: 0.7, sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending });
   NAV.dust = new THREE.Points(dg, dm); scene.add(NAV.dust);
   NAV._dustGeo = dg; NAV._dustMat = dm;
-  // Ф62: кластеры астероидов — 5 скоплений по 5–9 камней
-  for (let g2 = 0; g2 < 5; g2++) {
-    const cc = startP.clone().lerp(endP, Math.min(0.97, 0.1 + (g2 + Math.random() * 0.9) / 5.6));
-    const n2 = 5 + Math.floor(Math.random() * 5);
+  // З12: камни — эллипсоиды с вершинным шумом и текстурой камня; 3 кластера по 2–3 камня:
+  // «пару мимо пролетели», не рой. Неравномерный масштаб — каждый камень своей формы.
+  NAV._rockTex = makeRockTex();
+  const rockGeo = makeRockGeo();
+  const rockMat = new THREE.MeshStandardMaterial({ map: NAV._rockTex, roughness: 0.95, metalness: 0.05 });
+  NAV._rockGeo = rockGeo; NAV._rockMat = rockMat;
+  for (let g2 = 0; g2 < 3; g2++) {
+    const cc = startP.clone().lerp(endP, Math.min(0.97, 0.15 + (g2 + Math.random() * 0.9) / 3.6));
+    const n2 = 2 + Math.floor(Math.random() * 2);
     for (let k2 = 0; k2 < n2; k2++) {
-      const off = new THREE.Vector3((Math.random() - 0.5), (Math.random() - 0.4) * 0.5, (Math.random() - 0.5)).multiplyScalar(0.3);
-      const m = new THREE.Mesh(geo, mat);
+      const off = new THREE.Vector3((Math.random() - 0.5), (Math.random() - 0.4) * 0.5, (Math.random() - 0.5)).multiplyScalar(0.35);
+      const m = new THREE.Mesh(rockGeo, rockMat);
       m.position.copy(cc).add(off);
-      m.scale.setScalar(0.008 + Math.random() * 0.022);
-      m.userData.rot = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.9);
+      m.scale.set(0.014 + Math.random() * 0.03, 0.010 + Math.random() * 0.02, 0.012 + Math.random() * 0.025);
+      m.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      m.userData.rot = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.5);
       scene.add(m); NAV.debris.push(m);
     }
   }
-  // Ф62: космический мусор — плоские обломки с вращением
+  // Ф62: космический мусор — плоские обломки (З12: сокращено 16 → 6)
   const jgeo = new THREE.PlaneGeometry(0.02, 0.03);
   const jmat = new THREE.MeshStandardMaterial({ color: 0x8a8f9a, roughness: 0.6, metalness: 0.4, side: THREE.DoubleSide });
   NAV._junkGeo = jgeo; NAV._junkMat = jmat;
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 6; i++) { // З12: мусора меньше
     const base = startP.clone().lerp(endP, Math.random());
     const off = new THREE.Vector3((Math.random() - 0.5), (Math.random() - 0.3) * 0.4, (Math.random() - 0.5)).multiplyScalar(0.45);
     const m = new THREE.Mesh(jgeo, jmat);
@@ -2334,6 +2723,9 @@ function clearFlightDebris() {
   if (NAV.dust) { scene.remove(NAV.dust); NAV.dust = null; }
   if (NAV._dustGeo) { NAV._dustGeo.dispose(); NAV._dustGeo = null; }
   if (NAV._dustMat) { NAV._dustMat.dispose(); NAV._dustMat = null; }
+  if (NAV._rockGeo) { NAV._rockGeo.dispose(); NAV._rockGeo = null; }
+  if (NAV._rockMat) { NAV._rockMat.dispose(); NAV._rockMat = null; }
+  if (NAV._rockTex) { NAV._rockTex.dispose(); NAV._rockTex = null; }
   if (NAV.junk && NAV.junk.length) { for (const m of NAV.junk) scene.remove(m); NAV.junk.length = 0; }
   if (NAV._junkGeo) { NAV._junkGeo.dispose(); NAV._junkGeo = null; }
   if (NAV._junkMat) { NAV._junkMat.dispose(); NAV._junkMat = null; }
@@ -2444,7 +2836,7 @@ function applyStarType() {
   star.T_eff = isRG ? 3500 : st.T;
   state.starLum = isRG ? 1000 : st.L;
   star.starLum = state.starLum;
-  if (isRG) star.realRadiusM = R_SUN_M * 100; else star.realRadiusM = R_SUN_M * st.R;
+  if (isRG) star.realRadiusM = R_SUN_M * R_RG_SUN; else star.realRadiusM = R_SUN_M * st.R; // P0-4: 220 R☉ (было 100)
   star.radius = isRG ? orbitVisR(star.realRadiusM / AU_M) : 0.23 * Math.cbrt(st.R);
   star.mesh.scale.setScalar(star.radius);
   const col = isRG ? 0xff5533 : st.col;
@@ -3099,17 +3491,22 @@ function navPointerDown(e) {
   if (!NAV.on) return;
   if (NAV.flying) { if (NAV.camMode === 3) { _navDown = { x: e.clientX, y: e.clientY }; _navMoved = false; } return; } // Ф63: оглядываться в кино-режиме
   _navDown = { x: e.clientX, y: e.clientY }; _navMoved = false; _navDragWp = -1;
-  // попадание в веху? (drag для перемещения)
+  // З14: попадание в веху — экранная близость (спрайты 0.09 — малая мишень для луча)
   const rect = canvas.getBoundingClientRect();
-  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
-  const hits = raycaster.intersectObjects(NAV.wpMeshes);
-  if (hits.length > 0) {
-    _navDragWp = NAV.wpMeshes.indexOf(hits[0].object);
-    // Ф58: блокируем OrbitControls, пока тянем веху — иначе камера крутится вместе с перетаскиванием
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let best = -1, bd = 26;
+  for (let i = 0; i < NAV.wpMeshes.length; i++) {
+    const v = NAV.wpMeshes[i].position.clone().project(camera);
+    if (v.z > 1 || v.z < -1) continue;
+    const sx = (v.x * 0.5 + 0.5) * rect.width, sy = (-v.y * 0.5 + 0.5) * rect.height;
+    const d = Math.hypot(sx - mx, sy - my);
+    if (d < bd) { bd = d; best = i; }
+  }
+  if (best >= 0) {
+    _navDragWp = best;
+    // Ф58: блокируем OrbitControls, пока тянем веху
     controls.enabled = false;
-    e.stopPropagation(); // Ф58: не дать OrbitControls поймать тот же pointerdown
+    e.stopPropagation();
   }
 }
 function navPointerMove(e) {
@@ -3164,8 +3561,22 @@ function navPointerUp(e) {
   if (_navDragWp >= 0) { _navDragWp = -1; return; } // закончили drag
   if (wasDrag) return; // был поворот камеры
   // добавление вехи
-  const p = screenToWorldOnPlane(e.clientX, e.clientY);
-  if (p) navAddWaypoint(p);
+  let p = screenToWorldOnPlane(e.clientX, e.clientY);
+  if (p) {
+    // З14: если клик пришёлся на тело — веха на тело (vis-позиция, y=0), а не «рядом» на эклиптике
+    const r2 = canvas.getBoundingClientRect();
+    _evMouse.x = ((e.clientX - r2.left) / r2.width) * 2 - 1;
+    _evMouse.y = -((e.clientY - r2.top) / r2.height) * 2 + 1;
+    raycaster.setFromCamera(_evMouse, camera);
+    const meshList = state.bodies.filter(b => !b.isStar && b.mesh).map(b => b.mesh);
+    const hits2 = raycaster.intersectObjects(meshList);
+    if (hits2.length) {
+      const hitMesh = hits2[0].object;
+      const bb = state.bodies.find(b2 => b2.mesh === hitMesh);
+      if (bb) { p.copy(visPos(bb.position, bb.semiMajor)); p.y = 0; }
+    }
+    navAddWaypoint(p);
+  }
 }
 document.getElementById('btn-nav').addEventListener('click', () => {
   if (NAV.on) exitNavMode(); else enterNavMode();
@@ -3280,7 +3691,7 @@ function relaxBodies(dtSec) {
       if (Math.abs(b._targetMass - b.mass) < Math.abs(b._targetMass) * 1e-9) b.mass = b._targetMass;
     }
     if (b._targetRadiusV != null) {
-      const tr = R_EARTH_M * Math.pow(b._targetRadiusV / 0.09, 3);
+      const tr = R_EARTH_M * Math.pow(b._targetRadiusV / 0.09, 2); // P0-8: обратная к visualRadiusM=0.09·√(r/R⊕), степень 2 (была 3 — слайдер сходился к неверному размеру)
       b.realRadiusM += (tr - b.realRadiusM) * k;
       if (Math.abs(tr - b.realRadiusM) < tr * 1e-9) b.realRadiusM = tr;
       b.radius = visualRadiusM(b.realRadiusM, b.isStar);
@@ -3405,7 +3816,7 @@ function updateThermodynamics(dtYears) {
       const tRel = state.starAge / Tms;
       if (tRel > 1) {
         state.starPhase = 'RG';
-        star.realRadiusM = R_SUN_M * 100;
+        star.realRadiusM = R_SUN_M * R_RG_SUN; // P0-4: 220 R☉ (было 100) — Венера честно съедается
         // Ф42: визуальный радиус гиганта в сжатой шкале рендера (3*sqrt(r_а.е.)), иначе рост невидим
         star.radius = orbitVisR(star.realRadiusM / AU_M);
         star.mesh.scale.setScalar(star.radius);
@@ -3422,19 +3833,44 @@ function updateThermodynamics(dtYears) {
         if (star.rays) for (const r of star.rays) r.sprite.material.color.setHex(0xff5533);
         if (star.light) star.light.color.setHex(0xff8a5a);
         logEvent('☀️ Звезда покинула главную последовательность — стадия красного гиганта');
+        refreshHZRing(); // P0-7: кольцо HZ должно раздвинуться до 23–56 а.е. у гиганта (L=1000)
       } else {
         // Ф41: светимость накапливается от ВОЗРАСТА звезды (иначе прирост за кадр исчезающе мал)
-        state.starLum = Math.max(0.01, (star.starLum || 1.0) * (1 + 0.4 * state.starAge / Tms));
+        const newLum = Math.max(0.01, (star.starLum || 1.0) * (1 + 0.4 * state.starAge / Tms));
+        const dL = newLum / (state.starLum || 1);
+        star.starLum = newLum;
+        recomputeStarLum(); // P0-7: сумма всех звёзд (для binary)
+        if (dL > 1.05) refreshHZRing(); // P0-7: при росте L >5% — обновить кольцо
       }
     }
   }
   const Lstar = state.starLum || 1.0;
+  const stars = state.bodies.filter(s => s.isStar);
   for (const b of state.bodies) {
     if (b.isStar) { b.T_eff = (state.starPhase === 'MS') ? (STAR_TYPES[b.starTypeCode || 'G'] || STAR_TYPES.G).T : 3500; continue; }
-    // Формула T_eq с учётом светимости звезды: T_eq = T_sun * sqrt(L) * sqrt(R_sun/2D) * (1-A)^0.25
-    const D = Math.max(b.semiMajor * AU_M, R_SUN_M); // по большой полуоси (осознанный компромисс v1)
+    // Формула T_eq: T_eq = T_sun * sqrt(L) * sqrt(R_sun/2D) * (1-A)^0.25, где D — большая полуось.
+    // Ф70 (P0-7 фикс): однозвёздная ветка вернулась к канонической форме √L (прежняя сломанная
+    // версия L·R_☉²/(4D²) давала flux≈5e-6 на 1 а.е. → Венера 18 K вместо 736 K — расстояние
+    // учитывалось дважды: и в flux, и в flux^0.25). Бинарную свели к той же форме через
+    // L_eff = Σ L_i·(D/r_i)² — на 1 а.е. у Солнца L_eff=1, как в каноне. Контроль: Венера 736.9,
+    // Земля 287.1, Марс 210.6 K; бинарная Земля-эквивалент 305 K.
     const A = Math.min(0.95, b.albedo + 0.2 * b.iceFraction);
-    const T0 = T_SUN * Math.sqrt(Lstar) * Math.sqrt(R_SUN_M / (2 * D));
+    const D = Math.max(b.semiMajor * AU_M, R_SUN_M); // по большой полуоси (осознанный компромисс v1)
+    let Leff;
+    if (stars.length <= 1) {
+      Leff = Lstar; // однозвёздная: каноническая форма sqrt(L)
+    } else {
+      // бинарная: эффективная светимость, приведённая к той же форме sqrt(L_eff)
+      // на 1 а.е. у Солнца L_eff = 1·(1/1)² = 1 — нормировка та же, что в каноне
+      const D_au = b.semiMajor;
+      let sum = 0;
+      for (const s of stars) {
+        const r_au = Math.max(0.01, b.position.distanceTo(s.position));
+        sum += (s.starLum || 1) * (D_au / r_au) * (D_au / r_au);
+      }
+      Leff = sum;
+    }
+    const T0 = T_SUN * Math.sqrt(Leff) * Math.sqrt(R_SUN_M / (2 * D));
     b.T_eq = T0 * Math.pow(1 - A, 0.25);
     b.T_surf = b.T_eq * Math.pow(1 + 0.75 * greenhouseTau(b), 0.25);
     if (state.tidalAuto) b.tidalHeating = computeTidalHeating(b); // S3.1: авто-приливы
@@ -3468,9 +3904,17 @@ function updateThermodynamics(dtYears) {
       b.iceFraction = 0;
     }
     // === v3.0: запись истории температуры (для графика, ~120 точек) ===
+    // P1: раньше push каждый кадр → при ⏩ (20000 шагов) график забивался одним значением и был плоским.
+    // Теперь сэмпл по sim-времени: не чаще, чем span/120, где span — окно наблюдения (адаптивно).
     if (dtYears > 0) {
-      b.tempHistory.push(T);
-      if (b.tempHistory.length > 120) b.tempHistory.shift();
+      const span = Math.max(120, state.simYears - (b._histT0 || 0));
+      const step = Math.max(1, span / 120);
+      if (!b._lastSampleT || (state.simYears - b._lastSampleT) >= step) {
+        b.tempHistory.push(T);
+        if (b.tempHistory.length > 120) b.tempHistory.shift();
+        b._lastSampleT = state.simYears;
+        if (!b._histT0) b._histT0 = state.simYears;
+      }
     }
   }
 }
@@ -3562,16 +4006,37 @@ function computeEnvFitness(b) {
     return k_stab * k_mag * k_ocean * k_nut;
   }
   if (ls.stage === 2) {
-    const k_O2 = b.atmO2 >= 10 ? 1 : 0;
-    const k_geo = b.tectonics === 'active' ? 1 : 0.5;
-    const k_clim = Math.abs(T - 288) < 30 ? 1 : 0.4;
-    return k_O2 * k_geo * k_clim;
+    // P0-6: раньше стадия 2 была жёстко водно-центрична (k_O2=atmO2>=10, k_clim=|T-288|<30) →
+    // все неводные биохимии застревали здесь навсегда (метановый мир fitness=0).
+    // Теперь окно температуры берётся по своей биохимии, а «маркер окисления» — свой для каждой химии.
+    const chem = ls.chem || solventOf(b) || 'water';
+    const c = BIOCHEMS[chem] || BIOCHEMS.water;
+    const mid = (c.T[0] + c.T[1]) / 2, half = Math.max(15, (c.T[1] - c.T[0]) / 2);
+    const k_clim = Math.exp(-Math.pow((T - mid) / (half * 0.7), 2)); // окно своей биохимии
+    const k_solv = (chem === 'water') ? (b.atmO2 >= 10 ? 1 : 0.2)         // вода: O2 как маркер фотосинтеза
+                   : (c.need(b) ? 1 : 0.2);                              // своя химия: свой «кислород»
+    const k_geo = b.tectonics !== 'off' ? 1 : 0.5;
+    return k_solv * k_geo * k_clim;
   }
   if (ls.stage === 3) {
+    const chem = ls.chem || 'water';
+    const c = BIOCHEMS[chem] || BIOCHEMS.water;
+    const mid = (c.T[0] + c.T[1]) / 2, half = Math.max(15, (c.T[1] - c.T[0]) / 2);
     const k_res = ls.hasIntelligence ? 1 : 0.5;
-    const k_atm = Math.abs(T - 288) < 40 ? 1 : 0.3;
+    const k_atm = Math.exp(-Math.pow((T - mid) / (half * 0.9), 2)); // P0-6: окно своей биохимии (было |T-288|<40)
     const k_mag = b.magField >= 0.3 ? 1 : 0.2;
     return k_res * k_atm * k_mag;
+  }
+  // P0-6: стадия 4 (цивилизация) раньше возвращала 0 → население не росло.
+  // Теперь та же форма, что у стадии 3, плюс бонус за энергию/технологии.
+  if (ls.stage >= 4) {
+    const chem = ls.chem || 'water';
+    const c = BIOCHEMS[chem] || BIOCHEMS.water;
+    const mid = (c.T[0] + c.T[1]) / 2, half = Math.max(15, (c.T[1] - c.T[0]) / 2);
+    const k_clim = Math.exp(-Math.pow((T - mid) / (half * 1.0), 2));
+    const k_tech = 0.5 + 0.5 * Math.min(1, (b.kardashev || 0) / 2);
+    const k_energy = b.dysonProgress > 0 ? 1.2 : 1; // сфера Дайсона → буст роста
+    return k_clim * k_tech * k_energy;
   }
   return 0;
 }
@@ -3598,14 +4063,20 @@ function conditionsMet(b, nextStage) {
 function rollCatastrophes(b, dtYears) {
   const ls = b.life;
   if (ls.stage < 1) return;
+  // P0-5: oncePerEpoch — катастрофы цивилизации (война/экоколлапс) не чаще раза за эпоху.
+  // Эпоха = период непрерывного пребывания на стадии 4; сбрасываем b._epochCat при новом подъёме.
+  if (!b._epochCat) b._epochCat = {};
   for (const ev of CATASTROPHES) {
     if (ls.stage < ev.minStage) continue;
+    if (ev.oncePerEpoch && b._epochCat[ev.name]) continue; // уже была в эту эпоху
     const p = -Math.expm1(-dtYears / ev.period); // Пуассон: корректно при любом dt
     if (Math.random() < p) {
       ls.stage = Math.max(0, ls.stage - ev.drop);
       ls.cooldown = COOLDOWN_YR;
       b.tempAnomaly += ev.dT;
       b.anomalyTau = Math.max(b.anomalyTau, ev.tau);
+      if (ev.oncePerEpoch) b._epochCat[ev.name] = true; // запомнили — до следующего подъёма
+      if (ls.stage < 4) b._epochCat = {}; // упали с 4 — эпоха кончилась, при новом подъёме старт чистый
       logEvent('☄️ ' + b.name + ': катастрофа «' + ev.name + '» — регресс до уровня ' + ls.stage);
       break; // не более одной катастрофы за шаг
     }
@@ -3656,10 +4127,15 @@ function updateLife(dtYears) {
     if (ls.stage > 0 && ls.chem && !chemOK(b, ls.chem)) {
       // Ф48: среда вышла за пределы биохимии — биосфера погибает целиком
       ls.stage = 0; ls.chem = null; ls.cooldown = COOLDOWN_YR;
+      // P0-14: цивилизация гибнет вместе с биосферой — раньше hasIntelligence/kardashev/Dyson оставались
+      ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0;
+      if (b.popul) b.popul = 0;
       logEvent('☠️ ' + b.name + ': среда непригодна для биохимии — биосфера погибла');
     } else if (ls.stage > 0 && !conditionsMet(b, ls.stage)) {
       ls.stage -= 1;
       ls.cooldown = COOLDOWN_YR; // bioTime — история, не обнуляем
+      // P0-14: при падении ниже стадии 3 (разум) — цивилизация деградирует
+      if (ls.stage < 3) { ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0; if (b.popul) b.popul = 0; }
       logEvent('⚠️ ' + b.name + ': регресс жизни до уровня ' + ls.stage);
     }
     rollCatastrophes(b, dtYears);
@@ -3670,9 +4146,16 @@ function updateLife(dtYears) {
 //  Симуляция и перемотка
 // ============================================================================
 function jumpYears(totalYears) {
+  if (NAV.on) exitNavMode(); // P1: перемотка в режиме навигатора — корректный выход
   const steps = clamp(Math.round(totalYears / 1000), 1, 20000);
   const h = totalYears / steps;
-  for (let s = 0; s < steps; s++) { updateThermodynamics(h); updateLife(h); }
+  for (let s = 0; s < steps; s++) {
+    updateThermodynamics(h);
+    // P0-5: жизнь тикает мелким шагом (≤100 лет = периода войны/10) — иначе при h=50000
+    // один Math.random решал судьбу цивилизации, и Пуассон терял точность для rare-событий.
+    const hLife = Math.min(h, 100);
+    for (let t = 0; t < h; t += hLife) updateLife(Math.min(hLife, h - t));
+  }
   advanceOrbitsAnalytic(totalYears); // R3-19: орбиты тоже уходят вперёд (аналитически)
   state.simYears += totalYears;
   recenterOnStar(); // Ф39
@@ -3701,6 +4184,7 @@ function simulate(dtSec) {
   updateLife(dtYears);
   tickRecoveries(dtYears); // З6: восстановление параметров после событий
   updateVisuals(dtSec);
+  updateSelMarker(); // З10: зелёный треугольник над выбранной планетой
   updateImpacts(dtSec);
 }
 
@@ -3767,7 +4251,7 @@ function updateVisuals(dtSec) {
       const starT = getStar();
       const hasVolatile = (b.iceFraction > 0.15 || (b.water > 0.005 && b.atmPressure < 0.05));
       if (starT && hasVolatile) {
-        const rAU = b.position.distanceTo(starT.position) / AU_M;
+        const rAU = b.position.distanceTo(starT.position); // P0-1: позиции уже в а.е. (G=4π²) — делить на AU_M было ошибкой, I всегда 0
         let I = (rAU > 0.02) ? Math.min(1, Math.pow(0.55 / rAU, 1.5)) : 0;
         if ((b.T_eff + b.tempAnomaly) < 160) I *= 0.35; // криогенный мир сублимирует слабо
         if (I < 0.02) {
@@ -3855,6 +4339,7 @@ const PLANETS = [
     moons: [{ name: 'Тритон', massE: 0.018, distE: 4, color: 0xc0b8c0, speed: 0.5 }] },
 ];
 function loadSolarSystem() {
+  if (NAV.on) exitNavMode(); // P1: сброс/смена пресета в режиме навигатора — корректный выход
   for (const b of state.bodies) removeBodyVisual(b);
   state.bodies = [];
   state.simYears = 0;
@@ -3886,6 +4371,7 @@ function loadSolarSystem() {
   for (const b of state.bodies) b.mesh.position.copy(b.isStar ? b.position : visPos(b.position, b.semiMajor));
   refreshAllOrbits();
   state.selectedId = state.bodies.find(b => !b.isStar).id;
+  recomputeStarLum(); // P0-7: честный state.starLum (сумма всех звёзд)
   updateThermodynamics(0);
   refreshHZRing();
   renderSidebar();
@@ -3897,19 +4383,20 @@ const TRAPPIST_SYSTEM = [
     albedo: 0.0, water: 0.01, atmPressure: 0.001, atmN2: 50, atmO2: 0, atmCO2: 30, atmH2O: 0, atmCH4: 0, magField: 0.1, tectonics: 'slow', tilt: 0.0 },
   { name: 'TRAPPIST-1c', mass: 1.31, radius: 0.106, realRadiusM: 6.86e6, a: 0.01580, e: 0.007, i: 0.0, color: 0xb8966a, texture: 'venus',
     albedo: 0.1, water: 0.05, atmPressure: 0.01, atmN2: 60, atmO2: 0, atmCO2: 20, atmH2O: 1, atmCH4: 0, magField: 0.2, tectonics: 'slow', tilt: 0.1 },
-  { name: 'TRAPPIST-1d', mass: 0.39, radius: 0.078, realRadiusM: 5.05e6, a: 0.02227, e: 0.008, i: 0.0, color: 0x7090b0, texture: 'earth',
-    albedo: 0.3, water: 0.3, atmPressure: 0.5, atmN2: 70, atmO2: 5, atmCO2: 0.4, atmH2O: 2, atmCH4: 0.001, magField: 0.4, tectonics: 'active', tilt: 0.2 },
+  { name: 'TRAPPIST-1d', mass: 0.39, radius: 0.078, realRadiusM: 5.05e6, a: 0.02227, e: 0.008, i: 0.0, color: 0xb07850, texture: 'mars', // З11: d — полусухая, не «земля»
+    albedo: 0.25, water: 0.15, atmPressure: 0.3, atmN2: 70, atmO2: 2, atmCO2: 0.6, atmH2O: 1.2, atmCH4: 0.001, magField: 0.4, tectonics: 'active', tilt: 0.2 },
   { name: 'TRAPPIST-1e', mass: 0.69, radius: 0.092, realRadiusM: 5.96e6, a: 0.02925, e: 0.005, i: 0.0, color: 0x4a7ab5, texture: 'earth',
     albedo: 0.35, water: 0.6, atmPressure: 0.8, atmN2: 78, atmO2: 18, atmCO2: 0.04, atmH2O: 1.5, atmCH4: 0.0002, magField: 0.7, tectonics: 'active', tilt: 0.4 },
-  { name: 'TRAPPIST-1f', mass: 1.04, radius: 0.108, realRadiusM: 6.99e6, a: 0.03849, e: 0.006, i: 0.0, color: 0x5a90a0, texture: 'earth',
-    albedo: 0.4, water: 0.4, atmPressure: 0.3, atmN2: 75, atmO2: 10, atmCO2: 0.1, atmH2O: 0.8, atmCH4: 0.0001, magField: 0.5, tectonics: 'slow', tilt: 0.3 },
-  { name: 'TRAPPIST-1g', mass: 1.13, radius: 0.113, realRadiusM: 7.31e6, a: 0.04683, e: 0.002, i: 0.0, color: 0x4a8a7a, texture: 'earth',
-    albedo: 0.3, water: 0.2, atmPressure: 0.6, atmN2: 80, atmO2: 3, atmCO2: 0.2, atmH2O: 0.5, atmCH4: 0.001, magField: 0.6, tectonics: 'active', tilt: 0.1 },
-  { name: 'TRAPPIST-1h', mass: 0.33, radius: 0.072, realRadiusM: 4.66e6, a: 0.06193, e: 0.006, i: 0.0, color: 0xa0b0c0, texture: 'mars',
-    albedo: 0.25, water: 0.05, atmPressure: 0.001, atmN2: 70, atmO2: 0, atmCO2: 10, atmH2O: 0.01, atmCH4: 0, magField: 0.05, tectonics: 'off', tilt: 0.0 },
+  { name: 'TRAPPIST-1f', mass: 1.04, radius: 0.108, realRadiusM: 6.99e6, a: 0.03849, e: 0.006, i: 0.0, color: 0xc8d8e8, texture: 'ice', // З11: f — замёрзший океанный мир
+    albedo: 0.5, water: 0.25, atmPressure: 0.3, atmN2: 75, atmO2: 4, atmCO2: 0.1, atmH2O: 0.8, atmCH4: 0.0001, magField: 0.5, tectonics: 'slow', tilt: 0.3 },
+  { name: 'TRAPPIST-1g', mass: 1.13, radius: 0.113, realRadiusM: 7.31e6, a: 0.04683, e: 0.002, i: 0.0, color: 0x9fc4d8, texture: 'ice', // З11: g — ледяной
+    albedo: 0.45, water: 0.1, atmPressure: 0.6, atmN2: 80, atmO2: 1, atmCO2: 0.2, atmH2O: 0.5, atmCH4: 0.001, magField: 0.6, tectonics: 'active', tilt: 0.1 },
+  { name: 'TRAPPIST-1h', mass: 0.33, radius: 0.072, realRadiusM: 4.66e6, a: 0.06193, e: 0.006, i: 0.0, color: 0xd0d8e0, texture: 'ice', // З11: h — ледышка
+    albedo: 0.45, water: 0.05, atmPressure: 0.001, atmN2: 70, atmO2: 0, atmCO2: 10, atmH2O: 0.01, atmCH4: 0, magField: 0.05, tectonics: 'off', tilt: 0.0 },
 ];
 
 function loadPreset(systemKey) {
+  if (NAV.on) exitNavMode(); // P1: смена пресета в режиме навигатора — корректный выход
   for (const b of state.bodies) removeBodyVisual(b);
   state.bodies = [];
   state.simYears = 0; state.events = []; state.recoveries = []; clearEventAnims(); // З6
@@ -3980,6 +4467,7 @@ function loadPreset(systemKey) {
   for (const b of state.bodies) b.mesh.position.copy(b.isStar ? b.position : visPos(b.position, b.semiMajor));
   refreshAllOrbits();
   state.selectedId = (state.bodies.find(b => !b.isStar) || {}).id || null;
+  recomputeStarLum(); // P0-7: сумма светимостей всех звёзд (для binary = 1.2, не 0.6)
   updateThermodynamics(0);
   refreshHZRing();
   renderSidebar();
@@ -4043,7 +4531,7 @@ function restoreScene() {
         tidalHeating: num(s.tidalHeating, 0), internalHeat: num(s.internalHeat, 0), tectonics: s.tectonics,
         texture: s.textureKind || null, rings: !!s.hasRings, color: num(s.color, 0x4a90e2),
         axialTilt: num(s.axialTilt, 0), axialSpeed: num(s.axialSpeed, 0.3), // v3.0
-        moons: Array.isArray(s.moons) ? s.moons.map(m => ({ name: m.name, massE: m.massE, distE: m.distE, color: m.color, speed: m.speed, angle: m.angle })) : [], // v3.0
+        moons: Array.isArray(s.moons) ? s.moons.map(m => ({ name: String(m.name || 'Луна'), massE: num(m.massE, 0.01), distE: Math.max(0.5, num(m.distE, 3)), color: num(m.color, 0xc0c0c0), speed: num(m.speed, 0.4), angle: num(m.angle, 0) })) : [], // v3.0 + P1: num() санитайзер для лун (distE>0.5 — иначе NaN/0 ломали кинематику)
         x: num(s.x, 1), y: num(s.y, 0), z: num(s.z, 0), vx: num(s.vx, 0), vy: num(s.vy, 0), vz: num(s.vz, 0),
       });
       if (s.isStar) { b.starTypeCode = s.starTypeCode || 'G'; b.starLum = num(s.starLum, 1); } // v3.0
@@ -4321,6 +4809,7 @@ function deleteSelected() {
   const sel = getSelected();
   if (!sel || sel.isStar) return;
   if (!confirm('Удалить планету «' + sel.name + '»?')) return;
+  if (NAV.on && sel === NAV.fromBody) exitNavMode(); // P1: удалили планету-старта → корректный выход
   removeBodyVisual(sel);
   const idx = state.bodies.indexOf(sel);
   if (idx >= 0) state.bodies.splice(idx, 1);
@@ -4725,7 +5214,25 @@ document.getElementById('btn-frame').addEventListener('click', () => {
   controls.target.copy(c);
   camera.position.set(c.x + d * 0.55, c.y + d * 0.45, c.z + d);
 });
-document.getElementById('btn-reset').addEventListener('click', loadSolarSystem);
+document.getElementById('btn-reset').addEventListener('click', () => {
+  // P1: undo сброса — сохраняем снимок сцены на 10 с, показываем тост «↩ Вернуть».
+  // Раньше localStorage.removeItem → часовую сцену нельзя было вернуть.
+  let snapshot = null;
+  try { snapshot = localStorage.getItem(LS_KEY) || localStorage.getItem(LS_KEY_OLD); } catch (e) {}
+  loadSolarSystem();
+  if (snapshot) {
+    try { localStorage.setItem(LS_KEY + '.undo', snapshot); } catch (e) {}
+    navShowToast('↺ Сцена сброшена. <a href="#" id="undo-reset" style="color:#4fd8ff">↩ Вернуть</a>', 10000, true);
+    setTimeout(() => {
+      const u = document.getElementById('undo-reset');
+      if (u) u.addEventListener('click', (e) => {
+        e.preventDefault();
+        try { localStorage.setItem(LS_KEY, localStorage.getItem(LS_KEY + '.undo')); restoreScene(); } catch (er) {}
+        navShowToast('↩ Сцена восстановлена', 2000);
+      });
+    }, 50);
+  }
+});
 document.getElementById('btn-pause').addEventListener('click', (e) => {
   state.paused = !state.paused;
   e.currentTarget.textContent = state.paused ? '▶ Продолжить' : '⏸ Пауза';
@@ -4788,6 +5295,12 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 // Ф67: честные пропорции вращения — периоды в сутках (знак: ретроградные Венера/Уран минус).
 // Эталон: Земля = 0.3 рад/с (как было по умолчанию). Повторный клик — вернуть прежние скорости.
+function fmtSpeedThKmh(vKms) { // З15: скорость в км/ч с адаптивными единицами
+  const v = (vKms || 0) * 3600; // км/ч
+  if (v < 1e6) return (v / 1000).toFixed(1) + ' тыс. км/ч';
+  if (v < 1e9) return (v / 1e6).toFixed(1) + ' млн км/ч';
+  return (v / 1e9).toFixed(1) + ' млрд км/ч';
+}
 function fmtSpeedKms(v) {
   if (v < 1e5) return Math.round(v) + ' км/с';
   if (v < 1e9) return (v / 1e6).toFixed(1) + ' млн км/с';
@@ -4836,6 +5349,7 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   if (composer) composer.setSize(w, h);
+  if (bloomPass) bloomPass.resolution.set(w, h); // P1: bloom-разрешение устаревало после resize
 }
 window.addEventListener('resize', resize);
 new ResizeObserver(resize).observe(document.getElementById('canvas-wrap'));
