@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Конструктор Солнечной системы v3.6 — интерактивная N-body симуляция: парниковый эффект, жизнь, луны, типы звёзд, шкала Кардашева, живое Солнце с протуберанцами, кометные хвосты, космический навигатор">
-<title>Конструктор Солнечной системы — v3.10</title>
+<title>Конструктор Солнечной системы — v3.12</title>
 <style>
   :root {
     --bg: #0a0f1a; --panel: #111827; --panel-2: #1f2937; --border: #2a3548;
@@ -172,7 +172,11 @@
     background: rgba(13,19,32,0.9); border: 1px solid var(--accent); border-radius: 8px;
     padding: 8px 16px; font-size: 12px; color: var(--accent); display: none; box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
   #nav-toast.show { display: block; }
-  #nav-popup { position: absolute; z-index: 26; background: var(--panel); border: 1px solid var(--accent);
+  .letterbox { position: absolute; left: 0; right: 0; height: 8vh; background: #000; opacity: 0;
+  transition: opacity .8s; pointer-events: none; z-index: 5; }
+#letterbox-top { top: 0; } #letterbox-bottom { bottom: 0; }
+.letterbox.show { opacity: 1; }
+#nav-popup { position: absolute; z-index: 26; background: var(--panel); border: 1px solid var(--accent);
     border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--text); display: none;
     box-shadow: 0 6px 18px rgba(0,0,0,0.6); cursor: pointer; }
   #nav-popup.show { display: block; }
@@ -273,7 +277,7 @@
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="scene-canvas" data-help="canvas"></canvas>
-      <div id="watermark">В. А. Будник<br>23.11.2026 · v3.10</div>
+      <div id="watermark">В. А. Будник<br>23.11.2026 · v3.12</div>
       <div class="hud-corner" id="hud-info" data-help="hud">
         <div><b>ЛКМ</b> — выбрать · <b>drag</b> — вращать · <b>СКМ</b> — пан · <b>колесо</b> — зум</div>
         <div><kbd>Space</kbd> пауза · <kbd>F</kbd> вся система · <kbd>R</kbd> сброс · <kbd>+</kbd> добавить · <kbd>N</kbd> навигатор · <kbd>V</kbd> камера</div>
@@ -298,7 +302,7 @@
         </details>
         <details><summary>Масштаб: что «правильного» в картинке</summary>
           <p>Физика считается в честных а.е. и годах (N-body Verlet, парник, климат). На экране расстояния сжаты: r_вид = 3·√r — иначе Нептун улетал бы в 30 раз дальше Меркурия. Размеры тел сжаты квадратным корнем: Юпитер 3.3× Земли (реально 11×) — иначе не влезал в орбиту. Коллизии — по реальным радиусам.</p>
-          <p>Скорость ×1 = реальное время: Земля оборачивается за 365 секунд. Контрольные точки парника: Венера ~737 K, Земля ~287 K, Марс ~211 K.</p>
+          <p>Скорость ×1 = ×86 400 (одна секунда ≈ сутки): Земля оборачивается за ~6 минут. Контрольные точки парника: Венера ~737 K, Земля ~287 K, Марс ~211 K.</p>
         </details>
         <details><summary>Настройки планеты (редактор)</summary>
           <div class="row"><span>Масса (M⊕)</span><b>меняет орбиты СОСЕДЕЙ; собственная — почти нет (так и в реальности)</b></div>
@@ -361,7 +365,8 @@
         <p style="margin-top:8px;color:var(--muted)">Совет: добавьте Юпитер-подобную планету в обитаемую зону и прогоните 1 млрд лет — можно дождаться технологической цивилизации и построить сферу Дайсона.</p>
       </div>
       <!-- === v3.5: Космический навигатор === -->
-      <div id="nav-toast"></div>
+      <div id="letterbox-top" class="letterbox"></div><div id="letterbox-bottom" class="letterbox"></div>
+    <div id="nav-toast"></div>
       <canvas id="mini-map" width="150" height="150" title="Миникарта: клик — выбрать тело"></canvas>
       <div id="nav-popup" title="Удалить веху"></div>
       <div id="signal-toast"></div>
@@ -434,9 +439,10 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 // === v3.0: постобработка bloom (для свечения звезды) — инициализируется после renderer ===
-let composer = null, bloomPass = null;
+let composer = null, bloomPass = null, cinemaPass = null; // Ф102
 // Кино: кинематографический bloom — порог поднят, чтобы блумила только звезда/выхлоп/кристаллы,
 // а не плоские планеты. radius больше = мягче ореол. При полёте корабля — буст для wow-эффекта.
 let _navReady = false; // выставляется в true после определения NAV
@@ -501,10 +507,7 @@ const STAR_TYPES = {
 // после чего звезда расширяется до красного гиганта, потом — белый карлик (T~25000 K, R~0.01).
 const STAR_LIFE_MS_GYR = { M: 800, K: 17, G: 10, F: 4, A: 1.2, B: 0.05, O: 0.008 };
 
-// Шкала Кардашева по мощности, перехватываемой цивилизацией (Вт).
-const KARDASHEV_POW = { I: 4e26 /* ~Земли*/, II: 4e26 * 3.3e13 /* ~Солнца 3.3e-13 L☉*/, III: 4e49 };
-// Энергия звезды для шкалы II: 4e26 * L * 0.95 (3% термодинамических потерь → грубо).
-const SUN_LUM_W = 3.828e26;
+const SUN_LUM_W = 3.828e26; // Ф101: KARDASHEV_POW удалён (мёртвый, значения неверные — Кардашев считается по стадиям)
 
 // Калибровка парника (Нелдер-Мид 21.11, не трогать): tau = C*P^AP*E_mix, кап 500.
 // Контроль: Земля 287.1 K, Венера 736.9 K, Марс 210.6 K, гиганты 124/98/62/60 K.
@@ -528,7 +531,7 @@ const CATASTROPHES = [
   { name: 'гамма-всплеск', period: 1e9, drop: 2, dT: 0,   tau: 0,   minStage: 1 },
   // P0-5: ядерная война 1e3 → 1e5 лет + oncePerEpoch: раньше при ⏩ 1e9 лет (20000 шагов по 50000 лет)
   // p=1-e^-50≈1 на каждом шаге → цивилизация гарантированно гибла, журнал забит «войной».
-  { name: 'ядерная война', period: 1e5, drop: 2, dT: 10,  tau: 100, minStage: 4, oncePerEpoch: true },
+  { name: 'ядерная война', period: 3e6, drop: 1, dT: 10,  tau: 100, minStage: 4, oncePerEpoch: true }, // Ф88: постапокалипсис
   { name: 'экоколлапс',    period: 500, drop: 1, dT: 5,   tau: 100, minStage: 4, oncePerEpoch: true },
 ];
 
@@ -623,6 +626,27 @@ function initComposer() {
   composer.addPass(new RenderPass(scene, camera));
   bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.0, 0.85, 0.65); // Кино: мягкий ореол, порог повыше
   composer.addPass(bloomPass);
+  cinemaPass = new ShaderPass({
+    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uBoost: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }',
+    fragmentShader: [
+      'uniform sampler2D tDiffuse; uniform float uTime,uBoost; varying vec2 vUv;',
+      'float h(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }',
+      'void main(){',
+      '  float d = distance(vUv, vec2(0.5));',
+      '  float ca = 0.0016*uBoost*d;', // хроматика только на форсаже
+      '  vec3 col = vec3(texture2D(tDiffuse, vUv+vec2(ca,0.)).r,',
+      '                  texture2D(tDiffuse, vUv).g,',
+      '                  texture2D(tDiffuse, vUv-vec2(ca,0.)).b);',
+      '  col *= 1.0 - 0.38*smoothstep(0.42, 0.85, d);', // виньетка
+      '  col += (h(vUv*fract(uTime))-0.5)*0.035;', // зерно
+      '  col = pow(col, vec3(0.96)); col.b *= 1.04;', // лёгкий грейд
+      '  gl_FragColor = vec4(col, 1.0);',
+      '}'
+    ].join('\n')
+  });
+  cinemaPass.enabled = false;
+  composer.addPass(cinemaPass);
   composer.addPass(new OutputPass());
 }
 initComposer();
@@ -1414,7 +1438,7 @@ function advanceOrbitsAnalytic(dtYears) {
     if (b.isStar) continue;
     keplerAdvance(b, dtYears, star);
   }
-  absorbEngulfed(star); // P0-3: красный гигант съедает планеты в быстрых режимах
+  for (const st of state.bodies.filter(x => x.isStar)) absorbEngulfed(st); // Ф99: в бинарной вторая звезда тоже поглощает
 }
 
 // ============================================================================
@@ -1830,7 +1854,8 @@ function updateExhaust(dt) {
     any = true;
     const i3 = i * 3;
     EXH.pos[i3] += EXH.vel[i3] * dt; EXH.pos[i3 + 1] += EXH.vel[i3 + 1] * dt; EXH.pos[i3 + 2] += EXH.vel[i3 + 2] * dt;
-    EXH.vel[i3] *= 0.98; EXH.vel[i3 + 1] *= 0.98; EXH.vel[i3 + 2] *= 0.98;
+    const damp = Math.exp(-1.2 * dt); // Ф95: затухание независимо от частоты кадров
+    EXH.vel[i3] *= damp; EXH.vel[i3 + 1] *= damp; EXH.vel[i3 + 2] *= damp;
     EXH.life[i] -= dt;
     const l = Math.max(0, EXH.life[i]);
     if (l > 0.7) { EXH.col[i3] = 1; EXH.col[i3 + 1] = 1; EXH.col[i3 + 2] = 1; }
@@ -1928,7 +1953,7 @@ function makeShipMesh() {
       '  float body = pow(1.0-y, 1.4) * (0.7+0.5*turb);',
       '  vec3 hot = mix(vec3(1.0,0.97,0.9), vec3(0.35,0.75,1.0), y);',
       '  hot = mix(hot, vec3(1.0,0.55,0.15), uBoost);',
-      '  float a = body*core*diamonds*max(0.12, uThrottle);',
+      '  float a = body*core*diamonds*uThrottle;', // Ф85: на выбеге факел честно гаснет
       '  gl_FragColor = vec4(hot*a*3.0, a);',
       '}'
     ].join('\n')
@@ -1955,7 +1980,7 @@ function buildNavCurve() {
   const pts = [startP.clone(), ...NAV.wp.map(w => w.clone())];
   return new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
 }
-
+function addWaypointMesh(pos, idx) {
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: wpTex(), transparent: true, depthWrite: false }));
   sp.scale.setScalar(0.09); sp.position.copy(pos); sp.position.y = 0.05;
   scene.add(sp);
@@ -2107,7 +2132,7 @@ function setPaused(p) {
   if (btn) { btn.textContent = p ? '▶ Продолжить' : '⏸ Пауза'; btn.classList.toggle('active', p); }
 }
 function exitNavMode() {
-  NAV.on = false; NAV.flying = false;
+  NAV.on = false; NAV.flying = false; NAV._arriveT = 0; NAV._slowFactor = null; // Ф86
   document.body.classList.remove('nav-mode');
   document.getElementById('btn-nav').classList.remove('active');
   document.getElementById('nav-hud').classList.remove('show');
@@ -2197,7 +2222,7 @@ function startFlight() {
   NAV.alive = true; NAV.deathReason = null; NAV.health = 100; // Б5+Ф59: жив, корпус восстановлен
   // Ф59: без сброса health после гибели следующий полёт умирал на первом же кадре
   if (!NAV.ship) { NAV.ship = makeShipMesh(); scene.add(NAV.ship); }
-  NAV._throttle = 0; NAV._prevSpeed = null; NAV._boostK = 0; NAV._curve = null; RIG.init = false; // Ф74
+  NAV._throttle = 0; NAV._prevSpeed = null; NAV._boostK = 0; NAV._curve = null; RIG.init = false; NAV._slowFactor = null; // Ф74+Ф86
   const startB = NAV.fromBody;
   const startP = startB ? (startB.isStar ? startB.position : visPos(startB.position, startB.semiMajor)) : NAV.wp[0];
   NAV.ship.position.copy(startP);
@@ -2213,6 +2238,11 @@ function startFlight() {
   rg.setAttribute('aTangent', new THREE.BufferAttribute(rtan, 3));
   rg.setAttribute('aSide', new THREE.BufferAttribute(rside, 1));
   rg.setAttribute('aAge', new THREE.BufferAttribute(rage, 1));
+  { // Ф92: индексный буфер — без него лента рисует рваные треугольники
+    const idx = [];
+    for (let i = 0; i < RIB_N - 1; i++) { const a = 2 * i; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    rg.setIndex(idx);
+  }
   const trailMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     uniforms: { uWidth: { value: 0.014 } },
@@ -2329,8 +2359,10 @@ function updateNavFlight(dt) {
       emitArrivalSignal(dest);
       // Б4: после полёта удаляем линию пути и вехи со сцены (корабль и сигнал остаются)
       clearNavRouteKeepShip();
-      // Б6: вернёмся к орбитальному обзору, чтобы увидеть сигнал
-      setNavCamMode(0);
+      // Ф86: аутро прибытия — 4 с облёта корабля на фоне планеты назначения (сцена замедляется
+      // 0.04→0.008), только потом возврат к орбитальному виду
+      NAV._arriveT = 4;
+      NAV._arriveYaw = Math.atan2(camera.position.z - NAV.ship.position.z, camera.position.x - NAV.ship.position.x);
       updateNavHud();
       return;
     }
@@ -2414,7 +2446,7 @@ function updateNavFlight(dt) {
   for (const fl of NAV.ship.userData.flames) {
     fl.scale.z = (0.6 + 0.9 * NAV._throttle) * (0.85 + 0.3 * Math.sin(NAV.flyElapsed * 30));
     fl.scale.x = fl.scale.y = 0.5 + 0.7 * NAV._throttle;
-    fl.position.z = -0.62 + 0.5 * fl.scale.z; // узкая точка держится у сопла при любой длине
+    fl.position.z = -0.62 - 0.5 * fl.scale.z; // Ф85: вершина у сопла, шлейф расширяется назад (−Z)
   }
   if (NAV.ship.userData.engLight) {
     NAV.ship.userData.engLight.intensity = 2.5 * NAV._throttle * (0.85 + 0.3 * Math.random()) * (1 + NAV._boostK);
@@ -2519,7 +2551,13 @@ function killShip(reason) {
 let _navSavedCamPos = null, _navSavedCamTarget = null;
 function setNavCamMode(mode) {
   if (mode < 0 || mode > 3) return;
-  if (mode === 3) { NAV._cinYawOff = 0; NAV._cinPitchOff = 0; } // Ф63: сброс обзора при входе
+  if (mode === 3) { NAV._cinYawOff = 0; NAV._cinPitchOff = 0; NAV._shotI = 0; NAV._cinT = 0; NAV._blend = 0; } // Ф63+Ф96
+  if (cinemaPass) cinemaPass.enabled = (mode === 3); // Ф102: «плёнка» только в «Кино»
+  { // Ф102: леттербокс 8vh в «Кино»
+    const lt = document.getElementById('letterbox-top'), lb = document.getElementById('letterbox-bottom');
+    if (lt) lt.classList.toggle('show', mode === 3);
+    if (lb) lb.classList.toggle('show', mode === 3);
+  }
   const prev = NAV.camMode;
   // выход из режима 1/2 — возвращаем управление OrbitControls
   if (prev !== 0 && mode === 0) {
@@ -2547,28 +2585,72 @@ function setNavCamMode(mode) {
   const lbl = document.getElementById('nh-cam-label');
   if (lbl) lbl.textContent = NAV_CAM_NAMES[mode];
 }
+// Ф86: аутро прибытия — облёт корабля на фоне планеты назначения, замедление сцены
+function updateArrivalOutro(dt) {
+  if (!NAV.on || !(NAV._arriveT > 0)) return;
+  NAV._arriveT -= dt;
+  NAV._arriveYaw = (NAV._arriveYaw || 0) + dt * 0.9;
+  const sp = NAV.ship.position;
+  const r = 0.16;
+  const tgt = new THREE.Vector3(sp.x + Math.cos(NAV._arriveYaw) * r, sp.y + 0.06, sp.z + Math.sin(NAV._arriveYaw) * r);
+  camera.position.lerp(tgt, 1 - Math.pow(0.02, dt));
+  camera.lookAt(sp);
+  NAV._slowFactor = 0.008 + (0.04 - 0.008) * Math.max(0, NAV._arriveT / 4);
+  if (NAV._arriveT <= 0) { NAV._arriveT = 0; NAV._slowFactor = null; setNavCamMode(0); }
+}
+// Ф96: авторежиссёр «Кино 2.0» — таблица планов; смена 6–10 с, бленд 1.2 с, hold на гравипрыжке
+const SHOTS = [
+  { name: 'flyby', dur: 8, rig: (t, ship, fwd) => {
+      return { pos: ship.position.clone().addScaledVector(fwd, 0.5).add(new THREE.Vector3(0.1, 0.03, 0)), tgt: ship.position.clone() }; } },
+  { name: 'wingman', dur: 7, rig: (t, ship, fwd) => {
+      const side = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+      return { pos: ship.position.clone().addScaledVector(side, 0.14).addScaledVector(fwd, 0.05), tgt: ship.position.clone().addScaledVector(fwd, 0.2) }; } },
+  { name: 'low', dur: 6, rig: (t, ship, fwd) => ({
+      pos: ship.position.clone().add(new THREE.Vector3(0, -0.06, 0)).addScaledVector(fwd, -0.1), tgt: ship.position.clone() }) },
+  { name: 'tower', dur: 7, rig: (t, ship) => {
+      const b = nearestBodyTo(ship.position).body;
+      if (!b) return { pos: ship.position.clone().add(new THREE.Vector3(0.3, 0.15, 0)), tgt: ship.position.clone() };
+      const bp = b.isStar ? b.position : visPos(b.position, b.semiMajor);
+      return { pos: bp.clone().add(new THREE.Vector3(0, (b.radius || 0.1) * 2, 0.15)), tgt: ship.position.clone() }; } },
+];
 function updateNavCamera(dt, dir) {
   if (!NAV.ship || NAV.camMode === 0) return;
+  if (NAV._arriveT > 0) return; // Ф86: аутро прибытия держит камеру до конца
   const sp = NAV.ship.position;
   const d = dir.clone().normalize();
-  // Кино: лёгкое расширение FOV при разгоне (гравипрыжок) — эффект скорости, как в кино
-  const speedBoost = (NAV.flySpeed - 0.08) * 0.4; // до ~0.15 при прыжке
-  const fovBase = NAV_CAM_FOVS[NAV.camMode];
-  if (Math.abs(camera.fov - (fovBase + speedBoost)) > 0.05) {
-    camera.fov = fovBase + speedBoost;
-    camera.updateProjectionMatrix();
-  }
+  // Ф94: FOV задаёт только chaseCam (режимы 1/2); для «Кино» — базовое NAV_CAM_FOVS[3]
   if (NAV.camMode === 1 || NAV.camMode === 2) {
     // Ф74: оба следящих режима — на камере-риге с пружиной, креном и тряской
     chaseCam(dt, NAV.ship, d, NAV._throttle || 0, NAV.camMode);
   } else if (NAV.camMode === 3) {
-    // Ф63: кинематографическая камера — медленный облёт корабля; drag — «оглядываться»
+    // Ф96: авторежиссёр: планы сменяются каждые 6–10 с с блендом 1.2 с; drag — «оглядываться»
     NAV._cinT = (NAV._cinT || 0) + dt;
-    const yaw = NAV._cinT * 0.1 + (NAV._cinYawOff || 0);
-    const pit = 0.3 + (NAV._cinPitchOff || 0);
-    const off = new THREE.Vector3(Math.cos(yaw) * Math.cos(pit), Math.sin(pit), Math.sin(yaw) * Math.cos(pit)).multiplyScalar(0.45);
-    camera.position.lerp(sp.clone().add(off), 1 - Math.pow(0.002, dt));
-    camera.lookAt(sp.clone().add(d.clone().multiplyScalar(0.25)));
+    const hold = (NAV._boostK || 0) > 0.2; // на гравипрыжке план не переключаем
+    if (NAV._shotI == null) { NAV._shotI = 0; NAV._shotDur = SHOTS[0].dur; }
+    if (!hold && NAV._cinT > NAV._shotDur) {
+      NAV._cinT = 0;
+      NAV._shotI = (NAV._shotI + 1) % SHOTS.length;
+      NAV._shotDur = SHOTS[NAV._shotI].dur;
+      NAV._blend = 1.2;
+    }
+    const shot = SHOTS[NAV._shotI].rig(NAV._cinT, NAV.ship, d);
+    let desired = shot.pos, tgtP = shot.tgt;
+    if ((NAV._blend || 0) > 0 && NAV._shotPrevPos) { // плавный переход без рывков
+      const al = 1 - NAV._blend / 1.2;
+      const sm = al * al * (3 - 2 * al);
+      desired = NAV._shotPrevPos.clone().lerp(desired, sm);
+      tgtP = NAV._shotPrevTgt.clone().lerp(tgtP, sm);
+      NAV._blend = Math.max(0, NAV._blend - dt);
+    }
+    if (NAV._cinYawOff || NAV._cinPitchOff) { // Ф63: доворот «оглядывания» поверх плана
+      desired = tgtP.clone().add(desired.clone().sub(tgtP)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), NAV._cinYawOff || 0));
+      desired.y += (NAV._cinPitchOff || 0);
+    }
+    camera.position.lerp(desired, 1 - Math.pow(0.002, dt));
+    camera.lookAt(tgtP.clone().add(d.clone().multiplyScalar(0.15)));
+    NAV._shotPrevPos = camera.position.clone();
+    NAV._shotPrevTgt = tgtP.clone();
     NAV._cinYawOff = (NAV._cinYawOff || 0) * Math.pow(0.75, dt);
     NAV._cinPitchOff = (NAV._cinPitchOff || 0) * Math.pow(0.75, dt);
   }
@@ -3848,12 +3930,12 @@ function updateThermodynamics(dtYears) {
   const stars = state.bodies.filter(s => s.isStar);
   for (const b of state.bodies) {
     if (b.isStar) { b.T_eff = (state.starPhase === 'MS') ? (STAR_TYPES[b.starTypeCode || 'G'] || STAR_TYPES.G).T : 3500; continue; }
-    // Формула T_eq: T_eq = T_sun * sqrt(L) * sqrt(R_sun/2D) * (1-A)^0.25, где D — большая полуось.
+    // Формула T_eq: T_eq = T_sun * L^0.25 * sqrt(R_sun/2D) * (1-A)^0.25 (Ф89: канон L^¼).
     // Ф70 (P0-7 фикс): однозвёздная ветка вернулась к канонической форме √L (прежняя сломанная
     // версия L·R_☉²/(4D²) давала flux≈5e-6 на 1 а.е. → Венера 18 K вместо 736 K — расстояние
     // учитывалось дважды: и в flux, и в flux^0.25). Бинарную свели к той же форме через
     // L_eff = Σ L_i·(D/r_i)² — на 1 а.е. у Солнца L_eff=1, как в каноне. Контроль: Венера 736.9,
-    // Земля 287.1, Марс 210.6 K; бинарная Земля-эквивалент 305 K.
+    // Земля 287.1, Марс 210.6 K; бинарная Земля-эквивалент ~292 K (при L^¼).
     const A = Math.min(0.95, b.albedo + 0.2 * b.iceFraction);
     const D = Math.max(b.semiMajor * AU_M, R_SUN_M); // по большой полуоси (осознанный компромисс v1)
     let Leff;
@@ -3870,7 +3952,10 @@ function updateThermodynamics(dtYears) {
       }
       Leff = sum;
     }
-    const T0 = T_SUN * Math.sqrt(Leff) * Math.sqrt(R_SUN_M / (2 * D));
+    // Ф89: канон T_eq ∝ L^¼ (T⁴ ∝ L/D²). √L совпадал с каноном только при L=1 —
+    // потому и пропускался аудитом. TRAPPIST-1e теперь ~225 K (было 35), Нептун у RG ~260 K
+    // (было ~1500). Контроль при L=1 не меняется: Венера 736.9 / Земля 287.1 / Марс 210.6.
+    const T0 = T_SUN * Math.pow(Leff, 0.25) * Math.sqrt(R_SUN_M / (2 * D));
     b.T_eq = T0 * Math.pow(1 - A, 0.25);
     b.T_surf = b.T_eq * Math.pow(1 + 0.75 * greenhouseTau(b), 0.25);
     if (state.tidalAuto) b.tidalHeating = computeTidalHeating(b); // S3.1: авто-приливы
@@ -4000,10 +4085,14 @@ function computeEnvFitness(b) {
   }
   if (ls.stage === 1) {
     const k_stab = b.ecc < 0.3 ? 1 : 0.2;
-    const k_mag = b.magField >= 0.3 ? 1 : 0.1;
-    const k_ocean = b.water > 0.3 ? 1 : 0.3;
+    // Ф91: стадия 1 — по своей биохимии (Титан: need=1 → обещанные ×5, а не 167× медленнее);
+    // магнитное поле критично только для воды (солнечный ветер срывает H2O-атмосферу)
+    const chem1 = ls.chem || solventOf(b) || 'water';
+    const c1 = BIOCHEMS[chem1] || BIOCHEMS.water;
+    const k_solv = c1.need(b) ? 1 : 0.3;
+    const k_mag = (chem1 === 'water') ? (b.magField >= 0.3 ? 1 : 0.5) : 1;
     const k_nut = b.tectonics !== 'off' ? 1 : 0.4;
-    return k_stab * k_mag * k_ocean * k_nut;
+    return k_stab * k_mag * k_solv * k_nut;
   }
   if (ls.stage === 2) {
     // P0-6: раньше стадия 2 была жёстко водно-центрична (k_O2=atmO2>=10, k_clim=|T-288|<30) →
@@ -4075,8 +4164,8 @@ function rollCatastrophes(b, dtYears) {
       ls.cooldown = COOLDOWN_YR;
       b.tempAnomaly += ev.dT;
       b.anomalyTau = Math.max(b.anomalyTau, ev.tau);
-      if (ev.oncePerEpoch) b._epochCat[ev.name] = true; // запомнили — до следующего подъёма
-      if (ls.stage < 4) b._epochCat = {}; // упали с 4 — эпоха кончилась, при новом подъёме старт чистый
+      if (ev.oncePerEpoch) b._epochCat[ev.name] = true; // Ф88: один раз за жизнь биосферы —
+      // флаг НЕ стирается при падении со стадии 4 (иначе был no-op: drop уводил ниже 4 в тот же тик)
       logEvent('☄️ ' + b.name + ': катастрофа «' + ev.name + '» — регресс до уровня ' + ls.stage);
       break; // не более одной катастрофы за шаг
     }
@@ -4120,13 +4209,15 @@ function updateLife(dtYears) {
       if (b.kardashev >= 1) {
         b.dysonProgress = Math.min(1, tSinceTech / 5e8);
         if (b.kardashev < 2 && b.dysonProgress >= 1) {
-          b.kardashev = 2; logEvent('🛰️ ' + b.name + ': цивилизация II типа — сфера Дайсона построена!');
+          b.kardashev = 2;
+          if (!b._dysonLogged) { b._dysonLogged = true; logEvent('🛰️ ' + b.name + ': цивилизация II типа — сфера Дайсона построена!'); } // Ф88: дедуп
         }
       }
     } else { b.kardashev = 0; b.dysonProgress = 0; if (b.popul) b.popul *= Math.max(0, 1 - dtYears / 20); } // З6
     if (ls.stage > 0 && ls.chem && !chemOK(b, ls.chem)) {
       // Ф48: среда вышла за пределы биохимии — биосфера погибает целиком
       ls.stage = 0; ls.chem = null; ls.cooldown = COOLDOWN_YR;
+      b._epochCat = {}; // Ф88: биосфера погибла — эпоха кончилась, новая жизнь стартует чисто
       // P0-14: цивилизация гибнет вместе с биосферой — раньше hasIntelligence/kardashev/Dyson оставались
       ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0;
       if (b.popul) b.popul = 0;
@@ -4153,7 +4244,10 @@ function jumpYears(totalYears) {
     updateThermodynamics(h);
     // P0-5: жизнь тикает мелким шагом (≤100 лет = периода войны/10) — иначе при h=50000
     // один Math.random решал судьбу цивилизации, и Пуассон терял точность для rare-событий.
-    const hLife = Math.min(h, 100);
+    // Ф87: бюджет тиков жизни при ⏩ — раньше 1 млрд лет = 10 млн вызовов updateLife
+    // (фриз 40–120 с). hLife растёт с объёмом перемотки, но остаётся ≤ периода войны/10 —
+    // точность Пуассона сохранена; 1 млрд → 200 тыс. тиков ≈ 0.1–0.5 с вместо минуты.
+    const hLife = Math.max(1, Math.min(10000, totalYears / 200000));
     for (let t = 0; t < h; t += hLife) updateLife(Math.min(hLife, h - t));
   }
   advanceOrbitsAnalytic(totalYears); // R3-19: орбиты тоже уходят вперёд (аналитически)
@@ -4168,7 +4262,7 @@ function simulate(dtSec) {
   if (state.paused) return;
   // Б4: при полёте корабля время почти замирает — планеты еле движутся,
   // гравипрыжок возможен только при медленной сцене (в этом и смысл игры).
-  const navSlow = NAV.flying ? 0.04 : 1;
+  const navSlow = NAV._slowFactor != null ? NAV._slowFactor : (NAV.flying ? 0.04 : 1); // Ф86: аутро замедляет сцену
   const dtYears = dtSec * BASE_TEMPO_YPS * state.speed * navSlow;
   if (state.speed <= 1000) {
     const steps = clamp(Math.ceil(dtYears / H_MAX_YR), 1, 6000);
@@ -4514,6 +4608,10 @@ function restoreScene() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     if (!data || !Array.isArray(data.bodies) || data.bodies.length === 0) return false;
+    // Ф98: версия сейва: v3 — текущая; более старые совместимы (миграций пока нет),
+    // будущие версии — ветка миграции здесь.
+    if (data.version === undefined) data.version = 0;
+    if (data.version > 3) navShowToast('⚠ Сейв из более новой версии — возможны несоответствия', 3500);
     const num = (v, d) => (Number.isFinite(v) ? v : d); // защита от битых чисел (NaN травит N-body)
     for (const b of state.bodies) removeBodyVisual(b);
     state.bodies = [];
@@ -5136,7 +5234,7 @@ function addPlanet() {
   }
   const name = document.getElementById('np-name').value.trim() || 'Новая планета';
   const a = parseFloat(document.getElementById('np-a').value);
-  const e = clamp(parseFloat(document.getElementById('np-e').value) || 0, 0, 0.95);
+  let e = clamp(parseFloat(document.getElementById('np-e').value) || 0, 0, 0.95);
   const inc = clamp(parseFloat(document.getElementById('np-i').value) || 0, 0, 90) * DEG;
   const massE = clamp(parseFloat(document.getElementById('np-mass').value) || 1, 0.001, 1000);
   const radE = clamp(parseFloat(document.getElementById('np-radius').value) || 1, 0.1, 10);
@@ -5146,6 +5244,10 @@ function addPlanet() {
   const moons = [];
   if (moonName && moonMass > 0) moons.push({ name: moonName, massE: moonMass, distE: 3 + Math.random() * 2, color: 0xc0c0c0, speed: 0.4 });
   if (!Number.isFinite(a) || a < 0.05 || a > 100) { alert('Полуось a вне диапазона 0.05–100 а.е.'); return; }
+  { // Ф90: кламп перигея — не рождать планету внутри звезды (rp < R_звезды)
+    const rpMin = 2 * sun.realRadiusM / AU_M;
+    if (a * (1 - e) < rpMin) e = 1 - rpMin / a;
+  }
   const p = NP_PRESETS[addPlanetPreset] || NP_PRESETS.empty;
   const m = massE * M_EARTH;
   const st = stateFromElements(a, e, inc, Math.random() * Math.PI * 2, 0, G * (sun.mass + m)); // перигей, vis-viva внутри
@@ -5374,6 +5476,8 @@ function animate() {
   if (!(NAV.on && NAV.camMode !== 0)) controls.update(); // Ф60: damping-контроллер в следящих камерах не тянет камеру
   nebulaGroup.rotation.y += 0.0004 * dt; // v3.4: туманный фон дрейфует едва заметно
   updateNavFlight(dt); // v3.5: полёт корабля по маршруту
+  updateArrivalOutro(dt); // Ф86: аутро прибытия
+  if (cinemaPass && cinemaPass.enabled) { cinemaPass.uniforms.uTime.value += dt; cinemaPass.uniforms.uBoost.value = NAV._boostK || 0; } // Ф102
   updateNavSignal(dt); // v3.5: радиосигнал о прибытии
   updateFlightDebris(dt); // Б7: астероиды/бонусы
   processEventAnims(dt); // З6: анимации событий
