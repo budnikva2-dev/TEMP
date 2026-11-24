@@ -1,34 +1,14 @@
-YASEEK v14.96 — ПОЛНЫЙ КОД (build 14.96, sw v112, SchemaVersion=8)
-Собрано 24.11.2026 (04:4x UTC+5): база v14.95 + ревью-3 (верификация каждого пункта по коду):
+YASEEK v15.00 — ПОЛНЫЙ КОД (build 15.00, sw v116, SchemaVersion=8)
+Собрано 24.11.2026 (06:0x UTC+5): база v14.99 + гигиена: версии в текстах логов и протокола не носятся:
 
-ревью-3 — сводка:
-- МИГРАЦИЯ (п.1, критично): в шаге 7 удалены merge и UNIQUE для Stock — склад смесей остаётся
-  пер-партия по модели AppDb («UNIQUE здесь был бы ошибкой»); сироты FeedStockUsage делали
-  RefundAsync no-op (b == null → continue) — граммы не возвращались при правке/удалении
-  старых кормлений. Добавлен шаг 8 отката следа на уже мигрированных базах: DROP UNIQUE +
-  реассигнация сирот FeedStockUsage/Feeds.StockItemId на выжившую партию (граммы merge SUM
-  уже консолидировал). UX_Sleeps_Active добавлен в модель (свежие базы снова с индексом).
-  Новый тест Migration_keeps_stock_parties_and_refund_returns_each: две партии → откат
-  версии схемы до 6 → миграция → RefundAsync возвращает каждой партии свою долю.
-- sleepQuickAction (п.2): nowIso вынесен до try — при офлайне ReferenceError ронял постановку сна в очередь;
-- checkBuild (п.3): showPopover()/hidePopover() — тост «Доступно обновление» снова виден
-  (popover=manual без showPopover() — UA display:none);
-- fadeUp (п.4): только opacity — transform на секции делал её containing block для fixed FAB;
-- def/sleep/diaper/tm (п.8): формы закрываются ПОСЛЕ сохранения — при 4xx введённое не теряется;
-- defForm (п.5): офлайн-POST в очередь (раньше терялся);
-- PUT /api/chat/{id} (п.6): полный DTO как в GET (цитата/реакции/подписи не пропадают локально);
-- кэш CSS (п.7): ?v=14.96 + .css max-age=60 (было 3600);
-- мелкие: ExportZip build → 14.96; border:none у [popover]-тоста; лишняя } в styles.css убрана;
-  askModal: «Отмена» type=button (Enter подтверждает OK), inputmode по типу prompt
-  (decimal только для «сколько списать»); initTmStockRow вызывается и при правке;
-  guard state.metabolism в sendMetabolismFeedback.
+v15.00 — сводка (указание владельца 06:0x: «изменения и косяки надо отражать и менять сразу»):
+- ЛОГИ: «Yaseek v14.33: NULL-выравнивание…» — строка жила с v14.33 без обновления. Теперь
+  «Yaseek: NULL-выравнивание…» без версии: версия в логах не носится, только факт действия.
+- ПРОТОКОЛ: ПСР переименован из yaseek_psr_final_v14.70.txt в yaseek_psr.txt (один живой файл
+  без версии в имени; заголовок переписан, все внутренние упоминания старого имени заменены).
+- Функциональных изменений нет; версии 15.00 ×4 (version/health/APP_BUILD/IntegrationTests),
+  sw v116, styles ?v=15.00, ExportZip 15.00, README.
 
-Изменённые секции (10): Migrations.cs, AppDb.cs, SchemaMigrationsTests.cs, Program.cs, app.js,
-styles.css, index.html, sw.js, Program.Ep.Chat.cs, ExportZip.cs.
-Направленные тесты (SchemaMigrations/StockMovements/StockRace/StockChat/Integration): 31/31.
-Отложены (часть 31 ПСР): п.9 дата замеров date-only (серверное DTO), appendChat nearBottom,
-дедуп шва prependOlderChat при newStart=0, двойной тост при протухшем токене, dayInput.max,
-DbUpdateException-дедуп POST /api/feeds, AvgIntervalHours >24 ч на сервере.
 
 ======================================================================
 ### ФАЙЛ: .gitignore
@@ -71,7 +51,7 @@ ENTRYPOINT ["dotnet", "Yaseek.Api.dll"]
 отчёты Excel/PDF. Работает как сайт в любом браузере и ставится на домашний
 экран iPhone/Android.
 
-- **Текущая сборка:** v14.95 (24.11.2026). Серверная версия: `/api/version`, `/health`.
+- **Текущая сборка:** v15.00 (24.11.2026). Серверная версия: `/api/version`, `/health`.
 - **Хостинг:** Amvera (см. «Деплой на Amvera»).
 
 ## Как это устроено
@@ -2358,7 +2338,7 @@ public static class ExportZip
         var json = JsonSerializer.Serialize(new
         {
             exportedAtUtc = now,
-            build = "14.96", // v14.96 (ревью-3): версия экспорта — актуальная // v14.60 (ревью 1.1): был захардкожен 14.40
+            build = "15.00", // v15.00: версия экспорта — актуальная // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (ревью-4) // v14.96 (ревью-3): версия экспорта — актуальная // v14.60 (ревью 1.1): был захардкожен 14.40
             kids,
             users = users.Select(u => new { u.Id, u.Name, u.Role, u.KidIds, u.ViewStats, u.Feed, u.Chat,
                 u.PermStock, u.PermFormulas, u.PermKids, u.PermSettings, u.Active, u.ExpiresAtUtc }),
@@ -3435,6 +3415,12 @@ public static class SchemaMigrations
         // (б) активный сон: не более одного на ребёнка — лишние (гонка двух POST) закрываются;
         // (в) ReactionsAtUtc — штамп реакций для chatStamp (2.8);
         // (г) UNIQUE ClientId Feeds/FoodReactions — EnsureCreated даёт на свежих базах, миграция — на старых.
+        // v14.99 (прод-инцидент 05:45 24.11, краш Amvera): на старых базах дубли ClientId могли
+        // накапливаться свободно (индекс даёт только шаг 7, дедуп POST /api/feeds до v14.82-лока
+        // был SELECT-проверкой) — CREATE UNIQUE INDEX ронял старт: SQLite Error 19 UNIQUE
+        // constraint. Дубли нейтрализуем ДО создания индекса: у каждого дублирующего ClientId
+        // остаётся только самая старая запись (MIN Id), остальным — NULL (колонка nullable,
+        // частичный индекс NULL не учитывает; дедуп-семантика для исторических дублей не критична).
         (7, "v14.91: UNIQUE-гонки (склад/сон), ReactionsAtUtc, ClientId-индексы", async db =>
         {
             var isPg = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DATABASE_URL"));
@@ -3462,16 +3448,26 @@ public static class SchemaMigrations
                     ? @"ALTER TABLE ""ChatMessages"" ADD COLUMN ""ReactionsAtUtc"" TIMESTAMP NULL"
                     : @"ALTER TABLE ""ChatMessages"" ADD COLUMN ""ReactionsAtUtc"" TEXT NULL");
             foreach (var t2 in new[] { "Feeds", "FoodReactions" })
+            {
+                // v14.99 (прод-инцидент): дубли ClientId → нейтрализация NULL (кроме MIN Id) до UNIQUE-индекса
+                await db.Database.ExecuteSqlRawAsync($@"UPDATE ""{t2}"" SET ""ClientId"" = NULL WHERE ""Id"" IN (SELECT f.""Id"" FROM ""{t2}"" f WHERE f.""ClientId"" IS NOT NULL AND EXISTS (SELECT 1 FROM ""{t2}"" f2 WHERE f2.""ClientId"" = f.""ClientId"" AND f2.""Id"" < f.""Id""))");
                 await db.Database.ExecuteSqlRawAsync($@"CREATE UNIQUE INDEX IF NOT EXISTS ""UX_{t2}_ClientId"" ON ""{t2}"" (""ClientId"") WHERE ""ClientId"" IS NOT NULL");
+            }
         }),
         // v14.96 (ревью-3, критично): откат следа merge Stock из старого шага 7 — для баз, где
         // миграция 7 (до фикса) уже прошла: DROP UNIQUE-индекса + реассигнация сирот
         // FeedStockUsage/Feeds.StockItemId на выжившую партию (граммы merge SUM уже консолидировал).
         // На базах после исправленного шага 7 шаг — no-op. Идемпотентен.
-        (8, "v14.96: откат merge Stock из шага 7 (DROP UNIQUE, реассигнация usage/фидов на выжившую партию)", async db =>
+        // v14.97 (ревью-4, критично): guard EXISTS — если выжившей партии нет (склад смеси удалён
+        // целиком, DELETE /api/stock не чистит usage), SET = NULL ронял NOT NULL и старт приложения.
+        // Невозвратные сироты чистятся DELETE: их граммы уже списаны при кормлении, RefundAsync
+        // пропускал их молча (b == null → continue). UPDATE Feeds без guard — поле nullable.
+        (8, "v14.96/97: откат merge Stock из шага 7 (DROP UNIQUE, guard-реассигнация usage/фидов, чистка невозвратных сирот)", async db =>
         {
             await db.Database.ExecuteSqlRawAsync(@"DROP INDEX IF EXISTS ""UX_Stock_KidFormula""");
-            await db.Database.ExecuteSqlRawAsync(@"UPDATE ""FeedStockUsages"" SET ""StockItemId"" = (SELECT MIN(s.""Id"") FROM ""Stock"" s JOIN ""Feeds"" f ON f.""Id"" = ""FeedStockUsages"".""FeedId"" WHERE s.""KidId"" = f.""KidId"" AND s.""FormulaId"" = f.""FormulaId"") WHERE ""StockItemId"" NOT IN (SELECT ""Id"" FROM ""Stock"")");
+            await db.Database.ExecuteSqlRawAsync(@"UPDATE ""FeedStockUsages"" SET ""StockItemId"" = (SELECT MIN(s.""Id"") FROM ""Stock"" s JOIN ""Feeds"" f ON f.""Id"" = ""FeedStockUsages"".""FeedId"" WHERE s.""KidId"" = f.""KidId"" AND s.""FormulaId"" = f.""FormulaId"") WHERE ""StockItemId"" NOT IN (SELECT ""Id"" FROM ""Stock"") AND EXISTS (SELECT 1 FROM ""Stock"" s JOIN ""Feeds"" f ON f.""Id"" = ""FeedStockUsages"".""FeedId"" WHERE s.""KidId"" = f.""KidId"" AND s.""FormulaId"" = f.""FormulaId"")");
+            // v14.97 (ревью-4): невозвратные сироты (выжившей партии нет) удаляются — RefundAsync их всё равно пропускал молча
+            await db.Database.ExecuteSqlRawAsync(@"DELETE FROM ""FeedStockUsages"" WHERE ""StockItemId"" NOT IN (SELECT ""Id"" FROM ""Stock"")");
             await db.Database.ExecuteSqlRawAsync(@"UPDATE ""Feeds"" SET ""StockItemId"" = (SELECT MIN(s.""Id"") FROM ""Stock"" s JOIN ""Feeds"" f2 ON f2.""Id"" = ""Feeds"".""Id"" WHERE s.""KidId"" = f2.""KidId"" AND s.""FormulaId"" = f2.""FormulaId"") WHERE ""StockItemId"" IS NOT NULL AND ""StockItemId"" NOT IN (SELECT ""Id"" FROM ""Stock"")");
         }),
         // v14.82 (A2, ревью KP2.2): пофактические списания по партиям — точный возврат при
@@ -4200,11 +4196,11 @@ public static class SchemaMigrations
                 UPDATE ""Solids"" SET ""Notes"" = '' WHERE ""Notes"" IS NULL;";
         // v14.44: один батч вместо ~30 отдельных ExecuteSqlRaw (NULL-фиксы — старт один раз)
         await db.Database.ExecuteSqlRawAsync(fixesSql);
-        Console.WriteLine("Yaseek v14.33: NULL-выравнивание журнала выполнено");
+        Console.WriteLine("Yaseek: NULL-выравнивание журнала выполнено"); // v15.00: строка жила без обновления с v14.44 — версия в логах не носится
     }
     catch (Exception ex)
     {
-        Console.WriteLine("Yaseek v14.33: NULL-выравнивание: " + ex.Message);
+        Console.WriteLine("Yaseek: NULL-выравнивание: " + ex.Message); // v15.00: см. выше
     }
 
     // Сид-наполнение (смеси, продукты прикорма, дети) — строго ПОСЛЕ миграций:
@@ -7677,7 +7673,19 @@ app.MapPost("/api/sleep", async (AppDb db, HttpContext ctx, SleepIn dto) =>
     }
     var s0 = new Sleep { KidId = dto.KidId, StartUtc = start, EndUtc = end, Kind = dto.Kind == "active" ? "active" : kind, CreatedBy = me.Name, ClientId = string.IsNullOrWhiteSpace(dto.ClientId) ? null : dto.ClientId.Trim() };
     db.Sleeps.Add(s0);
-    await db.SaveChangesAsync();
+    try // v14.97 (ревью-4): гонка double-tap «Спит сейчас» — UNIQUE UX_Sleeps_Active давал 500; возвращаем активный сон как dedup
+    {
+        await db.SaveChangesAsync();
+    }
+    catch (DbUpdateException)
+    {
+        var dup2 = await db.Sleeps.AsNoTracking().FirstOrDefaultAsync(x => x.KidId == dto.KidId && x.Kind == "active");
+        if (dup2 == null) throw; // не конфликт активного сна — бросаем дальше (честный 500)
+        db.Entry(s0).State = EntityState.Detached;
+        return Results.Ok(new SleepDto(dup2.Id, dup2.KidId,
+            DateTime.SpecifyKind(dup2.StartUtc, DateTimeKind.Utc),
+            DateTime.SpecifyKind(dup2.EndUtc, DateTimeKind.Utc), dup2.Kind, dup2.CreatedBy));
+    }
     return Results.Ok(new SleepDto(s0.Id, s0.KidId,
         DateTime.SpecifyKind(s0.StartUtc, DateTimeKind.Utc),
         DateTime.SpecifyKind(s0.EndUtc, DateTimeKind.Utc), s0.Kind, s0.CreatedBy));
@@ -9426,9 +9434,9 @@ app.Use(async (ctx, next) =>
 EpAuth(app); // v14.80 (#11): эндпоинты Auth — вынесены в Program.Ep.Auth.cs
 
 // Версия сборки: клиент раз в 45 с проверяет и предлагает перезагрузку, если вышла новая.
-app.MapGet("/api/version", () => Results.Ok(new { build = "14.96" })); // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b) // v14.93 // v14.92
+app.MapGet("/api/version", () => Results.Ok(new { build = "15.00" })); // v15.00 (протокол/логи) // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (rev4) // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b) // v14.93 // v14.92
 // v14.8:health для мониторинга хостинга (без токена).
-app.MapGet("/health", () => Results.Ok(new { ok = true, build = "14.96" })); // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b) // v14.93 // v14.92
+app.MapGet("/health", () => Results.Ok(new { ok = true, build = "15.00" })); // v15.00 // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (rev4) // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b) // v14.93 // v14.92
 EpAdm(app); // v14.80 (#11): эндпоинты Adm — вынесены в Program.Ep.Adm.cs
 
 // v14.39: заблокированная учётка — read-only (просмотр и GET работают, правки — 403)
@@ -9893,13 +9901,17 @@ public static class StockLowAlert
 /// </summary>
 public class ReminderService(IServiceScopeFactory scopes, ILogger<ReminderService> log) : BackgroundService
 {
-    // v14.92 (3.5): чтение меток — как в HungerAlert: AdjustToUniversal|AssumeUniversal|RoundtripKind.
-    // Метки записаны в формате "o" (UTC); без стилей на хосте UTC+5 Kind=Local →
-    // «UtcNow - lm» уходит в минус → напоминания молчали часами.
-    internal static bool TryUtc(string? s, out DateTime v) => DateTime.TryParse(s,
+    // v14.92 (3.5): чтение меток — AdjustToUniversal|AssumeUniversal. Метки записаны в
+    // формате "o" (UTC); без стилей на хосте UTC+5 строка «00:00Z» парсилась бы как 05:00
+    // локального — «UtcNow - lm» уходил в минус и напоминания молчали часами.
+    // v14.98 (краш владельца 05:2x 24.11, хотфикс): RoundtripKind НЕ сочетается с
+    // AdjustToUniversal/AssumeUniversal — TryParse бросал ArgumentException на каждом тике
+    // цикла напоминаний (тесты не ловили: в интеграционных ENABLE_BG_REMINDER=0). Репро
+    // на .NET 10.0.104: с Z → Kind=Utc; без Z → трактуется как UTC (AssumeUniversal).
+    // Для "o"-меток поведение идентично прежнему намерению.
+    public static bool TryUtc(string? s, out DateTime v) => DateTime.TryParse(s,
         System.Globalization.CultureInfo.InvariantCulture,
-        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal
-        | System.Globalization.DateTimeStyles.RoundtripKind, out v);
+        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out v);
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -10258,10 +10270,13 @@ public static class SupabaseAdmin
     // v14.55 (KIMI F2/F3): единая конвертация «UTC-строка → локальный час/день».
     // Без зоны — AssumeUniversal (UTC); со смещением — честная конвертация;
     // AdjustToUniversal нормализует к UTC до прибавления сдвига (TZ контейнера не влияет).
+    // v14.98 (краш владельца 05:2x 24.11, хотфикс): RoundtripKind НЕ сочетается с
+    // AdjustToUniversal/AssumeUniversal — ArgumentException; для DateTimeOffset с/без
+    // смещения поведение идентично прежнему намерению (репро .NET 10.0.104).
     public static (int Hour, string Day) LocalHour(string iso, int tzMinutes)
     {
         var dt = DateTimeOffset.Parse(iso, CultureInfo.InvariantCulture,
-            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal | DateTimeStyles.RoundtripKind);
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
         var loc = dt.UtcDateTime.AddMinutes(tzMinutes);
         return (loc.Hour, loc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
     }
@@ -11363,7 +11378,7 @@ function netFail(e) {
 // Дедуп: одинаковый сбой (level+первые 120 символов сообщения) не чаще раза в минуту.
 // Буфер до 20 записей переживает перезагрузку (localStorage «yaseek-clientlog»);
 // флеш — раз в 30 с, при online и после логина. 401 (не залогинен) — запись остаётся в буфере.
-const APP_BUILD = "14.96"; // v14.96: согласовано с серверной версией // v14.95: согласовано с серверной версией // v14.94: согласовано с серверной версией // v14.92: согласовано с серверной версией // v14.69: версия билда для clientlog (поднимать в каждом спринте)
+const APP_BUILD = "15.00"; // v15.00: согласовано с серверной версией // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (ревью-4) // v14.96: согласовано с серверной версией // v14.95: согласовано с серверной версией // v14.94: согласовано с серверной версией // v14.92: согласовано с серверной версией // v14.69: версия билда для clientlog (поднимать в каждом спринте)
 const clientLogBuf = [];
 let clientLogFlushAt = 0;
 function clientLogPush(level, message, stack) {
@@ -12597,6 +12612,8 @@ $("#defForm").addEventListener("submit", async e => {
   });
   const editing = state.editingDefId;
   const save = () => { $("#defModal").close(); state.editingDefId = 0; }; // v14.96 (ревью-3, п.8): закрытие ПОСЛЕ сохранения — при 4xx введённое не теряется
+  // v14.97 (ревью-4): busy-guard — быстрый двойной тап «Сохранить» не отправляет дубль (модалка открыта до await)
+  if (e.target._busy) return; e.target._busy = true;
   toast("Сохраняю…");
   try {
     if (editing) {
@@ -12616,6 +12633,7 @@ $("#defForm").addEventListener("submit", async e => {
     else if (netFail(err)) { queueOffline("POST", "/api/defecations", body); toast("Сеть недоступна — запись уйдёт при подключении"); save(); } // v14.96 (ревью-3, п.5): офлайн-POST в очередь, не теряется
     else toast("Ошибка: " + err.message); // форма остаётся открытой — данные не потеряны (ревью-3, п.8)
   }
+  finally { e.target._busy = false; } // v14.97 (ревью-4)
 });
 
 /* ---------- Модалка сна (v14.17) ---------- */
@@ -12700,6 +12718,8 @@ $("#sleepForm").addEventListener("submit", async e => {
   });
   const editing = state.editingSleepId;
   const save = () => { $("#sleepModal").close(); state.editingSleepId = 0; }; // v14.96 (ревью-3, п.8): закрытие ПОСЛЕ сохранения
+  // v14.97 (ревью-4): busy-guard — быстрый двойной тап «Сохранить» не отправляет дубль (модалка открыта до await)
+  if (e.target._busy) return; e.target._busy = true;
   toast("Сохраняю…");
   try {
     if (editing) {
@@ -12718,6 +12738,7 @@ $("#sleepForm").addEventListener("submit", async e => {
     else if (netFail(err)) { queueOffline("POST", "/api/sleep", body); toast("Сеть недоступна — сон уйдёт при подключении"); save(); } /* v14.90 (2.2) */
     else toast("Ошибка: " + err.message);
   }
+  finally { e.target._busy = false; } // v14.97 (ревью-4)
 });
 
 /* ---------- Модалка подгузника (v14.19) ---------- */
@@ -12749,6 +12770,8 @@ $("#diaperForm").addEventListener("submit", async e => {
   });
   const editing = state.editingDiaperId;
   const save = () => { $("#diaperModal").close(); state.editingDiaperId = 0; }; // v14.96 (ревью-3, п.8): закрытие ПОСЛЕ сохранения
+  // v14.97 (ревью-4): busy-guard — быстрый двойной тап «Сохранить» не отправляет дубль (модалка открыта до await)
+  if (e.target._busy) return; e.target._busy = true;
   toast("Сохраняю…");
   try {
     if (editing) {
@@ -12767,6 +12790,7 @@ $("#diaperForm").addEventListener("submit", async e => {
     else if (netFail(err)) { queueOffline("POST", "/api/diapers", body); toast("Сеть недоступна — подгузник уйдёт при подключении"); save(); } /* v14.90 (2.2) */
     else toast("Ошибка: " + err.message);
   }
+  finally { e.target._busy = false; } // v14.97 (ревью-4)
 });
 
 /* ---------- Модалка температуры/лекарства (v14.20) ---------- */
@@ -12858,6 +12882,8 @@ $("#tmForm").addEventListener("submit", async e => {
   });
   const editing = state.editingTempMedId;
   const save = () => { $("#tmModal").close(); state.editingTempMedId = 0; }; // v14.96 (ревью-3, п.8): закрытие ПОСЛЕ сохранения
+  // v14.97 (ревью-4): busy-guard — быстрый двойной тап «Сохранить» не отправляет дубль (модалка открыта до await)
+  if (e.target._busy) return; e.target._busy = true;
   toast("Сохраняю…");
   try {
     if (editing) {
@@ -12877,6 +12903,7 @@ $("#tmForm").addEventListener("submit", async e => {
     else if (netFail(err)) { queueOffline("POST", "/api/tempmeds", body); toast("Сеть недоступна — запись уйдёт при подключении"); save(); } /* v14.90 (2.2) */
     else toast("Ошибка: " + err.message);
   }
+  finally { e.target._busy = false; } // v14.97 (ревью-4)
 });
 
 function setSeg(sel, val, attr = "owner") {
@@ -17338,7 +17365,7 @@ if (!state.token) {
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Yaseek">
-<link rel="stylesheet" href="/styles.css?v=14.96">
+<link rel="stylesheet" href="/styles.css?v=15.00">
 </head>
 <body>
 
@@ -19063,7 +19090,7 @@ body.age-kid #tab-stats #solidReactions { display: none !important; }
 // Service worker: офлайн-кэш + приём push-уведомлений
 // Стратегия: сеть-в-приоритете. При живом интернете интерфейс ВСЕГДА берётся с сервера
 // (обновления подхватываются сами при обычной перезагрузке), кэш используется только офлайн.
-const CACHE = 'yaseek-v112'; // v14.96
+const CACHE = 'yaseek-v116'; // v15.00 // v14.99 // v14.98 // v14.97 // v14.96
 const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest',
                '/icon-192.png', '/icon-512.png', '/bg-light.svg', '/bg-dark.svg',
                '/vendor/chart.umd.min.js'];
@@ -19753,7 +19780,7 @@ public class IntegrationTests : IClassFixture<ApiFactory>
         var c = C();
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/health")).StatusCode);
         var v = await Json(await c.GetAsync("/api/version"));
-        Assert.Equal("14.96", v.GetProperty("build").GetString()); // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b)
+        Assert.Equal("15.00", v.GetProperty("build").GetString()); // v15.00 // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (rev4) // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b)
     }
 
     [Fact]
@@ -20384,6 +20411,66 @@ public class PushStreamingTests
 }
 
 ======================================================================
+### ФАЙЛ: src/Yaseek.Tests/ReminderServiceTryUtcTests.cs
+using System.Globalization;
+using Yaseek.Api;
+using Xunit;
+
+public class ReminderServiceTryUtcTests
+{
+    // v14.98 (краш владельца 05:2x 24.11): RoundtripKind в комбинации с
+    // AdjustToUniversal/AssumeUniversal недопустим — TryParse бросал ArgumentException
+    // и цикл напоминаний падал на каждом тике (ENABLE_BG_REMINDER=0 в тестах — не ловили).
+    // Этот тест — защита от рецидива: запрещённая комбинация должна оставаться только
+    // в док-тесте, а TryUtc — парсить как раньше.
+    [Fact]
+    public void RoundtripKind_combined_with_assume_styles_throws_and_must_not_be_used()
+    {
+        var styles = DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal | DateTimeStyles.RoundtripKind;
+        Assert.Throws<ArgumentException>(() =>
+            DateTime.TryParse("2026-11-24T05:00:00Z", CultureInfo.InvariantCulture, styles, out _));
+    }
+
+    [Fact]
+    public void TryUtc_parses_utc_timestamp()
+    {
+        Assert.True(ReminderService.TryUtc("2026-11-24T05:00:00.0000000Z", out var v));
+        Assert.Equal(DateTimeKind.Utc, v.Kind);
+        Assert.Equal(new DateTime(2026, 11, 24, 5, 0, 0, DateTimeKind.Utc), v);
+    }
+
+    [Fact]
+    public void TryUtc_assumes_utc_without_zone()
+    {
+        Assert.True(ReminderService.TryUtc("2026-11-24 05:00:00", out var v));
+        Assert.Equal(DateTimeKind.Utc, v.Kind);
+    }
+
+    [Fact]
+    public void TryUtc_rejects_garbage()
+    {
+        Assert.False(ReminderService.TryUtc("не-дата", out _));
+    }
+
+    // v14.98: SupabaseAdmin.LocalHour — та же правка RoundtripKind → без него;
+    // DateTimeOffset.Parse со стилями не бросает и даёт UTC-значение для строки со смещением.
+    [Fact]
+    public void LocalHour_converts_utc_to_local_hour_and_day()
+    {
+        var (hour, day) = SupabaseAdmin.LocalHour("2026-11-24T20:30:00Z", 300);
+        Assert.Equal(1, hour);   // 20:30 UTC + 5 ч = 01:30 локального
+        Assert.Equal("2026-11-25", day);
+    }
+
+    [Fact]
+    public void LocalHour_assumes_utc_without_zone()
+    {
+        var (hour, day) = SupabaseAdmin.LocalHour("2026-11-24T20:30:00", 0);
+        Assert.Equal(20, hour);
+        Assert.Equal("2026-11-24", day);
+    }
+}
+======================================================================
 ### ФАЙЛ: src/Yaseek.Tests/ReportDataLoaderTests.cs
 
 
@@ -20565,8 +20652,123 @@ public class SchemaMigrationsTests
         Assert.Equal(40, g2.Grams, 6);
         Assert.False(db.FeedStockUsages.Any(u => u.FeedId == f2.Id));
     }
-}
 
+    // v14.97 (ревью-4, критично): шаг 8 — сценарий РЕАЛЬНОГО отката merge (сирота после
+    // слияния старым шагом 7), а не свежая база. Выжившая партия 40 г, usage осиротён (10 г,
+    // партия B удалена старым шагом 7), фид указывает на выжившую → версия 7 → шаг 8
+    // реассигнирует usage на выжившую → RefundAsync возвращает граммы в неё.
+    [Fact]
+    public async Task Migration_step8_reassigns_orphans_to_surviving_party()
+    {
+        var (db, conn) = NewDb();
+        using var _ = conn;
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads"));
+        var kid = db.Kids.First();
+        var formula = db.Formulas.First();
+        db.Stock.Add(new StockItem { KidId = kid.Id, FormulaId = formula.Id, Grams = 40 }); // выжившая после merge (30+20-10)
+        await db.SaveChangesAsync();
+        var survivor = db.Stock.AsNoTracking().First(s => s.KidId == kid.Id && s.FormulaId == formula.Id);
+        var feed = new Feed { KidId = kid.Id, FormulaId = formula.Id, Spoons = 12,
+            FedAtUtc = DateTime.UtcNow, FedBy = "mama", StockItemId = survivor.Id, StockConsumedGrams = 50 };
+        db.Feeds.Add(feed);
+        await db.SaveChangesAsync(); // v14.96-fix: feed.Id нужен ДО usage-строк — навигации нет, EF не исправит FeedId=0
+        db.FeedStockUsages.Add(new FeedStockUsage { FeedId = feed.Id, StockItemId = survivor.Id + 100000, KidId = kid.Id, Grams = 10 }); // след старого шага 7: сирота
+        await db.SaveChangesAsync();
+        var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = "UPDATE \"SchemaVersion\" SET \"Version\" = 7 WHERE \"Id\" = 1";
+        await cmd.ExecuteNonQueryAsync();
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads")); // до v14.97 бросал: SET = NULL при NOT NULL
+        Assert.Equal(SchemaMigrations.CurrentVersion, VersionOf(db));
+        db.ChangeTracker.Clear();
+        var u2 = await db.FeedStockUsages.AsNoTracking().FirstAsync(x => x.FeedId == feed.Id);
+        Assert.Equal(survivor.Id, u2.StockItemId); // реассигнация на выжившую
+        var f2 = await db.Feeds.AsNoTracking().FirstAsync(x => x.Id == feed.Id);
+        await StockOps.RefundAsync(db, f2, null);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var g = await db.Stock.AsNoTracking().FirstAsync(s => s.Id == survivor.Id);
+        Assert.Equal(50, g.Grams, 6); // 40 + 10 возврат
+        Assert.False(db.FeedStockUsages.Any(u => u.FeedId == f2.Id));
+    }
+
+    // v14.97 (ревью-4): склад смеси удалён ЦЕЛИКОМ (DELETE /api/stock не чистит usage) —
+    // guard EXISTS в шаге 8 не даёт SET = NULL уронить старт; невозвратные сироты чистятся.
+    [Fact]
+    public async Task Migration_step8_deletes_orphans_when_no_surviving_party()
+    {
+        var (db, conn) = NewDb();
+        using var _ = conn;
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads"));
+        var kid = db.Kids.First();
+        var formula = db.Formulas.First();
+        var feed = new Feed { KidId = kid.Id, FormulaId = formula.Id, Spoons = 12,
+            FedAtUtc = DateTime.UtcNow, FedBy = "mama", StockItemId = null, StockConsumedGrams = 50 };
+        db.Feeds.Add(feed);
+        await db.SaveChangesAsync();
+        db.FeedStockUsages.Add(new FeedStockUsage { FeedId = feed.Id, StockItemId = 888888, KidId = kid.Id, Grams = 10 }); // партия удалена
+        await db.SaveChangesAsync();
+        var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = "UPDATE \"SchemaVersion\" SET \"Version\" = 7 WHERE \"Id\" = 1";
+        await cmd.ExecuteNonQueryAsync();
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads")); // v14.96 здесь падал: NOT NULL + NULL
+        Assert.Equal(SchemaMigrations.CurrentVersion, VersionOf(db));
+        db.ChangeTracker.Clear();
+        var stockIds = db.Stock.AsNoTracking().Select(s => s.Id).ToHashSet();
+        var orphans = db.FeedStockUsages.AsNoTracking().ToList().Where(u => !stockIds.Contains(u.StockItemId)).ToList();
+        Assert.Empty(orphans); // невозвратные сироты удалены — RefundAsync их всё равно пропускал молча
+        var f2 = await db.Feeds.AsNoTracking().FirstAsync(x => x.Id == feed.Id);
+        await StockOps.RefundAsync(db, f2, null); // no-op: партий нет, usage нет — не падает
+        await db.SaveChangesAsync();
+    }
+
+    // v14.99 (прод-инцидент 05:45 24.11, краш Amvera): CREATE UNIQUE INDEX UX_Feeds_ClientId
+    // в шаге 7 ронял старт на старых базах с дублями ClientId (дедуп POST /api/feeds до
+    // v14.82-лока был SELECT-проверкой — гонки могли дать дубли). Шаг 7 теперь нейтрализует
+    // дубли ДО создания индекса: старейшая запись (MIN Id) сохраняет ClientId, остальные NULL.
+    [Fact]
+    public async Task Migration_step7_neutralizes_duplicate_clientids_before_unique_index()
+    {
+        var (db, conn) = NewDb();
+        using var _ = conn;
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads"));
+        // имитация СТАРОЙ прод-базы: индексы UX_*_ClientId появились только в шаге 7 (v14.91) —
+        // на старых базах их не было, поэтому дубли вставляются свободно. Дропаем модельные индексы.
+        var drop = db.Database.GetDbConnection().CreateCommand();
+        drop.CommandText = "DROP INDEX IF EXISTS \"UX_Feeds_ClientId\"; DROP INDEX IF EXISTS \"UX_FoodReactions_ClientId\"; DROP INDEX IF EXISTS \"IX_Feeds_ClientId\"; DROP INDEX IF EXISTS \"IX_FoodReactions_ClientId\""; // модельные имена EF (IX_*) тоже дропаем — шаг 7 создаёт под UX_*
+        await drop.ExecuteNonQueryAsync();
+        var kid = db.Kids.First();
+        var formula = db.Formulas.First();
+        db.Feeds.Add(new Feed { KidId = kid.Id, FormulaId = formula.Id, Spoons = 10,
+            FedAtUtc = DateTime.UtcNow, FedBy = "mama", ClientId = "dup-1", StockConsumedGrams = 0 });
+        db.Feeds.Add(new Feed { KidId = kid.Id, FormulaId = formula.Id, Spoons = 12,
+            FedAtUtc = DateTime.UtcNow.AddMinutes(1), FedBy = "papa", ClientId = "dup-1", StockConsumedGrams = 0 });
+        db.Feeds.Add(new Feed { KidId = kid.Id, FormulaId = formula.Id, Spoons = 14,
+            FedAtUtc = DateTime.UtcNow.AddMinutes(2), FedBy = "mama", StockConsumedGrams = 0 }); // без ClientId — не трогаем
+        db.FoodReactions.Add(new FoodReaction { KidId = kid.Id, SolidId = 1, AtUtc = DateTime.UtcNow,
+            Reaction = "ok", Note = "n1", ClientId = "dup-2", CreatedBy = "mama" });
+        db.FoodReactions.Add(new FoodReaction { KidId = kid.Id, SolidId = 1, AtUtc = DateTime.UtcNow.AddMinutes(1),
+            Reaction = "ok", Note = "n2", ClientId = "dup-2", CreatedBy = "papa" });
+        await db.SaveChangesAsync();
+        var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = "UPDATE \"SchemaVersion\" SET \"Version\" = 6 WHERE \"Id\" = 1";
+        await cmd.ExecuteNonQueryAsync();
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads")); // до v14.99 бросал: UNIQUE constraint failed
+        Assert.Equal(SchemaMigrations.CurrentVersion, VersionOf(db));
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='UX_Feeds_ClientId'";
+        Assert.Equal(1L, Convert.ToInt64(cmd.ExecuteScalar())); // индекс создан
+        db.ChangeTracker.Clear();
+        var feeds = db.Feeds.AsNoTracking().OrderBy(f => f.Id).ToList();
+        Assert.Equal(3, feeds.Count);
+        Assert.Equal("dup-1", feeds[0].ClientId); // старейшая сохраняет
+        Assert.Null(feeds[1].ClientId);           // дубль нейтрализован (реальный NULL после UPDATE)
+        // фид без ClientId в этой модели хранится пустой строкой (default колонки) — это норма,
+        // не дубль; нейтрализация трогает только дублирующиеся значения
+        Assert.True(string.IsNullOrEmpty(feeds[2].ClientId));
+        var reacts = db.FoodReactions.AsNoTracking().OrderBy(r => r.Id).ToList();
+        Assert.Equal("dup-2", reacts[0].ClientId);
+        Assert.Null(reacts[1].ClientId);
+    }
+}
 ======================================================================
 ### ФАЙЛ: src/Yaseek.Tests/StockChatTests.cs
 
@@ -21567,6 +21769,14 @@ alter table public.apps            enable row level security;
 -- alter table public.activity_minutes disable row level security;
 -- alter table public.login_history   disable row level security;
 -- alter table public.apps            disable row level security;
+
+
+
+
+
+
+
+
 
 
 
