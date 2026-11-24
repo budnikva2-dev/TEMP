@@ -416,7 +416,7 @@
         <span class="close" id="tut-close" data-help="tut-close">&times;</span>
         <h3>Конструктор Солнечной системы — Руководство</h3>
         <p>Перед вами модель планетной системы, в которой физика считается честно: гравитация между телами, парниковый эффект, вода в трёх фазах, развитие жизни по шести биохимиям, старение звёзд. Орбиты и размеры на экране сжаты, чтобы всё влезло, — но климат, столкновения и периоды обращения настоящие.</p>
-        <p>Главный принцип v3.17: систему не обязательно редактировать числами. Возьмите планету мышью и потяните — орбита, климат и льды пересчитаются под курсором. А если что-то неясно — включите режим «? Вопрос» и кликните по любой кнопке или ползунку: вместо действия вы получите объяснение, зачем он нужен.</p>
+        <p>Главный принцип v3.20: систему не обязательно редактировать числами. Возьмите планету мышью и потяните — орбита, климат и льды пересчитаются под курсором. А если что-то неясно — включите режим «? Вопрос» и кликните по любой кнопке или ползунку: вместо действия вы получите объяснение, зачем он нужен.</p>
         <details open><summary>Быстрый старт: 5 минут до первой живой планеты</summary>
           <div class="row"><span>1.</span><b>Поставьте паузу (Space) и кликните по Земле — справа откроется её редактор, слева появится HUD орбиты</b></div>
           <div class="row"><span>2.</span><b>Сначала прочитайте «Что значит каждый ползунок» ниже — 18 параметров, каждый с примером</b></div>
@@ -436,7 +436,7 @@
         </details>
         <details open><summary>Что значит каждый ползунок (редактор справа)</summary>
           <p>Планета — это система связанных параметров: масса и радиус задают гравитацию, атмосфера — парник, поверхность — отражение. Изменяете один — климат пересчитывается целиком, вплоть до роста или таяния льдов. Ниже — каждый ползунок: что делает и что попробовать.</p>
-          <div class="row"><span>Масса (M⊕)</span><b>свою орбиту почти не меняет, но раскачивает орбиты СОСЕДЕЙ — так Юпитер «выметает» астероиды. Попробуй: масса Земли ×100 — Марс за 100 лет съедет на ~24°</b></div>
+          <div class="row"><span>Масса (M⊕)</span><b>свою орбиту почти не меняет, но раскачивает орбиты СОСЕДЕЙ — так Юпитер «выметает» астероиды. Попробуй: масса Земли ×100 — соседние орбиты заметно раскачиваются; заметный дрейф средней долготы дают только тесные сближения (секулярные возмущения a не меняют)</b></div>
           <div class="row"><span>Радиус</span><b>размер шара на экране. Гравитация и столкновения считаются по реальному радиусу, а он выводится из массы — поэтому ползунок только визуальный</b></div>
           <div class="row"><span>Альбедо</span><b>отражательность поверхности: 0 — чёрная и горячая, 0.9 — белая и студёная. Поднять до 0.7 у Земли — льды растут и отражают ещё больше (может пойти «Земля-снежок»)</b></div>
           <div class="row"><span>Вода (океаны)</span><b>сколько океана: тепловая инерция, испарение, дождь. Высуши Землю до 0.1 — климат станет континентальным, до нуля — и водной жизни негде начаться</b></div>
@@ -508,12 +508,12 @@
         <details><summary>Космический навигатор (v3.6+)</summary>
           <div class="row"><span>Включить режим</span><b>🚀 Навигатор в тулбаре или клавиша N</b></div>
           <div class="row"><span>Старт корабля</span><b>с Земли (или первой водной планеты) автоматически</b></div>
-          <div class="row"><span>Добавить веху</span><b>клик по сцене (на плоскости эклиптики); близко к планете — привязка к её позиции</b></div>
+          <div class="row"><span>Добавить веху</span><b>клик по сцене (на плоскости эклиптики) — строго под курсором, без «прилипания» к планетам</b></div>
           <div class="row"><span>Переместить веху</span><b>перетащить маркер мышью — путь пересчитается</b></div>
           <div class="row"><span>Удалить веху</span><b>клик по маркеру (или оранжевая подсказка «✕ Удалить»)</b></div>
           <div class="row"><span>Гравипрыжок</span><b>если сегмент проходит у Юпитера/Солнца — Δv экономится, корабль ускоряется; виден оранжевым на пути</b></div>
           <div class="row"><span>Пауза/замедление</span><b>при прокладке сцена на паузе; при полёте время замедлено в 25× — планеты почти стоят, гравипрыжок возможен</b></div>
-          <div class="row"><span>3 камеры (V)</span><b>Орбитальный (как при запуске) · Следящий (вид сбоку, виден след) · От 3-го лица (вплотную, астероиды)</b></div>
+          <div class="row"><span>4 камеры (V)</span><b>Орбитальный (как при запуске) · Следящий (вид сбоку, виден след) · От 3-го лица (вплотную, астероиды) · Кино (облёт с блумом)</b></div>
           <div class="row"><span>Выживание</span><b>сгорел у Солнца · разбился о планету · улетел вникуда · кончилось топливо (медленный дрейф)</b></div>
           <div class="row"><span>Бонусы</span><b>зелёные кристаллы — +20% прочности и +100 очков; очки также за гравипрыжки и прибытие</b></div>
           <div class="row"><span>Запуск</span><b>▶ Запуск — корабль летит по Catmull-Rom-кривой, цвет — по скорости</b></div>
@@ -556,7 +556,7 @@
           <div class="sh-row" data-help="sh-snap"><span>Магнит резонанса <b id="sh-snap-v">1.5%</b></span><input type="range" id="sh-snap" min="0.2" max="5" step="0.1" value="1.5"></div>
           <div class="sh-toggles">
             <span class="sh-tg on" id="sh-tg-freeze" data-help="sh-freeze" title="Во время лепки симуляция встает на паузу">&#9208; Пауза при лепке</span>
-            <span class="sh-tg on" id="sh-tg-magnet" data-help="sh-magnet" title="Орбита примагничивается к резонансам соседей (2:1, 3:2, 5:3…)">&#129524; Привязка</span>
+            <span class="sh-tg on" id="sh-tg-magnet" data-help="sh-magnet" title="Орбита примагничивается к резонансам соседей (2:1, 3:2, 5:3…)">&#129522; Привязка</span>
           </div>
           <div class="sh-undo-hint"><kbd>Esc</kbd> &mdash; отменить лепку · <kbd>Ctrl+Z</kbd> &mdash; вернуть прежнюю орбиту</div>
         </div>
@@ -568,7 +568,7 @@
       <div id="nav-hud" data-help="nav-hud">
         <div class="nh-stat">Корабль: <b id="nh-pos">—</b></div>
         <div class="nh-stat">Вехи: <b id="nh-wp">0</b></div>
-        <div class="nh-stat">Δv: <b id="nh-dv">0</b> км/с</div>
+        <div class="nh-stat">Δv: <b id="nh-dv">0</b> тыс. км/ч</div>
         <div class="nh-stat" title="Пройдено с обратным сжатием масштаба (реальные млн км)">Пройдено: <b id="nh-dist">0</b> млн км</div>
         <div class="nh-stat" title="Время полёта (реальное)">⏱ <b id="nh-time">0:00</b></div>
         <div class="nh-stat" title="Реальная скорость корабля (путь за секунду)">⚡ <b id="nh-speed">0</b></div>
@@ -654,7 +654,7 @@
         <div id="pu-terra" style="display:flex;flex-direction:column;gap:5px"></div>
         <h3>Ресурсы планеты</h3>
         <div class="pu-res" id="pu-res"></div>
-        <div class="pu-hint">⚡ Энергия вырабатывают цивилизации (tier 4+). Скорость экологии — панель управления внизу. Общая пауза (Space) замораживает и экологию.</div>
+        <div class="pu-hint">⚡ Энергию вырабатывают цивилизации (племена дают базу), стерильные миры — колониальный грант. Запас — до 8. Скорость экологии — панель управления внизу. Общая пауза (Space) замораживает и экологию.</div>
         <h3>Скорость экологии</h3>
         <div class="pu-speeds" id="pu-speeds">
           <button data-bs="1">×1</button><button data-bs="10">×10</button><button data-bs="100" class="active">×100</button><button data-bs="1000">×1000</button>
@@ -2618,7 +2618,7 @@ function updateNavHud() {
   const el = id => document.getElementById(id);
   if (el('nh-wp')) el('nh-wp').textContent = NAV.wp.length;
   if (el('nh-len')) el('nh-len').textContent = NAV.totalLen.toFixed(1) + ' ед.';
-  if (el('nh-dv')) el('nh-dv').textContent = NAV.dvBudget.toFixed(1);
+  if (el('nh-dv')) el('nh-dv').textContent = (NAV.dvBudget * 3.6).toFixed(0); // км/с → тыс. км/ч (единая единица скорости)
   if (el('nh-slings')) el('nh-slings').textContent = NAV.slings;
   if (el('nh-fly')) el('nh-fly').disabled = NAV.wp.length < 1 || NAV.flying;
   if (el('nh-pos')) el('nh-pos').textContent = NAV.flying ? 'в полёте' : (NAV.signal ? 'прибыл 📡' : (!NAV.alive ? 'погиб 💥' : (NAV.fromBody ? NAV.fromBody.name : '—')));
@@ -2837,7 +2837,7 @@ function startFlight() {
   applyNavBloom(); // Кино: при полёте — усиленный bloom (выхлоп/след/кристаллы)
   logEvent('🚀 Корабль стартовал с ' + (startB ? startB.name : '—') + ' — пункт назначения: веха #' + NAV.wp.length);
   updateNavHud();
-  navShowToast('🚀 Полёт! Время замедлено. Камера: ' + NAV_CAM_NAMES[NAV.camMode||1] + ' (клавиша V — смена). Δv ' + NAV.dvBudget.toFixed(1) + ' км/с', 4000);
+  navShowToast('🚀 Полёт! Время замедлено. Камера: ' + NAV_CAM_NAMES[NAV.camMode||1] + ' (клавиша V — смена). Δv ' + (NAV.dvBudget * 3.6).toFixed(0) + ' тыс. км/ч', 4000);
 }
 // v3.5: радиосигнал «достижение цели» — расширяющиеся кольца от корабля к Земле
 function emitArrivalSignal(fromPos) {
@@ -3790,6 +3790,7 @@ function tickRecoveries(dtYears) {
     r.elapsed += dtYears;
     const k = Math.min(1, r.elapsed / r.years);
     r.b[r.key] = r.from + (r.to - r.from) * k;
+    if (r.key.indexOf('atm') === 0) normalizeAtm(r.b); // 3.2: газовые рампы держат сумму ≤95%
     if (k >= 1) state.recoveries.splice(i, 1);
   }
 }
@@ -5062,19 +5063,29 @@ function updateLife(dtYears) {
       }
     } else { b.kardashev = 0; b.dysonProgress = 0; if (b.popul) b.popul *= Math.max(0, 1 - dtYears / 20); } // З6
     if (ls.stage > 0 && ls.chem && !chemOK(b, ls.chem)) {
-      // Ф48: среда вышла за пределы биохимии — биосфера погибает целиком
-      ls.stage = 0; ls.chem = null; ls.cooldown = COOLDOWN_YR;
-      b._epochCat = {}; b._dysonLogged = false; // Ф88+Ф104: новая жизнь — новая эпоха, Дайсон-лог заново
-      // P0-14: цивилизация гибнет вместе с биосферой — раньше hasIntelligence/kardashev/Dyson оставались
-      ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0;
-      if (b.popul) b.popul = 0;
-      logEvent('☠️ ' + b.name + ': среда непригодна для биохимии — биосфера погибла');
-    } else if (ls.stage > 0 && !conditionsMet(b, ls.stage)) {
-      ls.stage -= 1;
-      ls.cooldown = COOLDOWN_YR; // bioTime — история, не обнуляем
-      // P0-14: при падении ниже стадии 3 (разум) — цивилизация деградирует
-      if (ls.stage < 3) { ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0; if (b.popul) b.popul = 0; }
-      logEvent('⚠️ ' + b.name + ': регресс жизни до уровня ' + ls.stage);
+      // v3.20-фикс (3.1): гистерезис — вне окна биохимии даётся 50 тыс. лет на
+      // восстановление, прежде чем биосфера казнится. Раньше один тик за окном
+      // (скачок альбедо/газов при терраформинге или событии) стирал миллиард лет эволюции.
+      ls.chemGrace = (ls.chemGrace || 0) + dtYears;
+      if (ls.chemGrace > 5e4) {
+        ls.chemGrace = 0;
+        // Ф48: среда вышла за пределы биохимии — биосфера погибает целиком
+        ls.stage = 0; ls.chem = null; ls.cooldown = COOLDOWN_YR;
+        b._epochCat = {}; b._dysonLogged = false; // Ф88+Ф104: новая жизнь — новая эпоха, Дайсон-лог заново
+        // P0-14: цивилизация гибнет вместе с биосферой — раньше hasIntelligence/kardashev/Dyson оставались
+        ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0;
+        if (b.popul) b.popul = 0;
+        logEvent('☠️ ' + b.name + ': среда непригодна для биохимии — биосфера погибла');
+      }
+    } else {
+      if (ls.stage > 0) ls.chemGrace = 0;
+      if (ls.stage > 0 && !conditionsMet(b, ls.stage)) {
+        ls.stage -= 1;
+        ls.cooldown = COOLDOWN_YR; // bioTime — история, не обнуляем
+        // P0-14: при падении ниже стадии 3 (разум) — цивилизация деградирует
+        if (ls.stage < 3) { ls.hasIntelligence = false; b.kardashev = 0; b.dysonProgress = 0; if (b.popul) b.popul = 0; }
+        logEvent('⚠️ ' + b.name + ': регресс жизни до уровня ' + ls.stage);
+      }
     }
     rollCatastrophes(b, dtYears);
   }
@@ -5104,6 +5115,11 @@ function jumpYears(totalYears) {
     // точность Пуассона сохранена; 1 млрд → 200 тыс. тиков ≈ 0.1–0.5 с вместо минуты.
     const hLife = Math.max(100, Math.min(10000, totalYears / 200000)); // Ф109: мелкие ⏩ не переплачивают тиками
     for (let t = 0; t < h; t += hLife) updateLife(Math.min(hLife, h - t));
+    // v3.20-фикс (P0-2): ⏩ обходил биосферу/цивилизации/энергию (bioTickGlobal звался
+    // только из simulate) и проекты терраформинга. fast-режим: 2 крупных подшага,
+    // без событий — равновесие (логистика точна на любом шаге) + эволюция (Poisson-нормирована).
+    bioTickGlobal(h, true);
+    tickRecoveries(h); // проекты терраформинга дотягиваются за те же годы
   }
   advanceOrbitsAnalytic(totalYears); // R3-19: орбиты тоже уходят вперёд (аналитически)
   state.simYears += totalYears;
@@ -5505,7 +5521,11 @@ function bioTick(b, h, eventsOn) {
   }
   bio.res.min = clamp(bio.res.min + 0.0025 * tec * h / 100, 0, 1); // +0.25%/100 лет × тектоника
   bio.res.bio = clamp(bio.res.bio + ((veg * 0.8 - bio.res.bio) * 0.01 - civEat) * h, 0, 1);
-  bio.res.nrg = clamp(bio.res.nrg + 0.0015 * civPow * h, 0, 1); // энергия Кардашева
+  // v3.20-фикс (P1-6): потолок 8 (был 1 — запас не накопить впрок) + колониальный грант
+  // 0.15 — стерильная планета без цивилизаций тоже копит энергию, иначе терраформинг
+  // заперт собственным предусловием («нужна цивилизация, чтобы сделать цивилизацию»).
+  civPow += 0.15;
+  bio.res.nrg = clamp(bio.res.nrg + 0.0015 * civPow * h, 0, 8); // энергия Кардашева + грант
   // --- фитнес и пополнение/вымирание ---
   const S = bio.species;
   for (const s of S) {
@@ -5567,8 +5587,9 @@ function bioTick(b, h, eventsOn) {
   if (eventsOn) bioBattles(b, h, stress);
   // --- мутации, видообразование, гибриды ---
   if (eventsOn) bioMutations(b, h, stress, T, veg);
-  // --- эволюция (tier-up) ---
-  if (eventsOn) bioEvolution(b, h, T, veg);
+  // --- эволюция (tier-up): ВСЕГДА (v3.20-фикс P0-4) — вероятности нормированы по годам,
+  // биоEvolution точен на любом шаге; eventsOn гейтит только битвы/мутации ---
+  bioEvolution(b, h, T, veg);
   // --- вымирание вида ---
   for (let i = S.length - 1; i >= 0; i--) {
     const s = S[i];
@@ -5727,7 +5748,10 @@ function bioEvolution(b, h, T, veg) {
     else if (s.tier === 2 && s.diet === 'prey') { ok = veg > 0.15 && b.atmO2 >= 6; msg = 'стая становится умнее'; }
     else if (s.tier === 3) { ok = bio.res.min > 0.3 && veg > 0.1; msg = 'рождение цивилизации'; }
     else if (s.tier === 4) { ok = s.tech >= 1 && bio.res.min > 0.25; msg = 'переход к постчеловечеству'; }
-    if (!ok || Math.random() > Math.min(0.5, 0.05 * h / 100 * 10)) continue;
+    // v3.20-фикс (P2): вероятность нормирована по годам (Poisson p = 1−exp(−λh)),
+    // λ = 0.0069/год — якорь старой формулы (0.5 за 100 лет). Раньше скорость эволюции
+    // была функцией размера шага симуляции.
+    if (!ok || Math.random() > Math.min(0.95, 1 - Math.exp(-0.0069 * h))) continue;
     const tplNext = SEED_CATALOG.find(t => t.tier === s.tier + 1);
     s.tier += 1;
     if (tplNext) {
@@ -5833,52 +5857,84 @@ function bioPostTick(b, h) {
     } else s._exodusT = null;
   }
 }
-function bioTickGlobal(dtYears) {
+function bioTickGlobal(dtYears, fast) {
   if (!dtYears || dtYears <= 0) return;
   for (const b of state.bodies) {
-    if (b.isStar || !b.bio || !b.bio.species.length) continue;
-    const open = (typeof PlanetUI !== 'undefined' && PlanetUI.open && PlanetUI.bodyId === b.id);
-    const mul = open ? (state.bioSpeed || 100) : 10; // вне интерфейса — фоновая эволюция ×10
+    if (b.isStar) continue;
+    if (!b.bio || !b.bio.species.length) {
+      // v3.20-фикс (P1-6): колониальный грант — стерильная планета копит энергию без
+      // биосферы (bioTick возвращается на пустых species). Иначе терраформинг мёртвого
+      // мира заперт: энергии ноль, цивилизаций нет, грант не тикал.
+      if (!b.bio) ensureBio(b);
+      b.bio.res.nrg = clamp(b.bio.res.nrg + 0.002 * dtYears * (state.bioSpeed || 100), 0, 8);
+      continue;
+    }
+    // v3.20-фикс (P0-3): одна ставка эволюции для всех планет — раньше открытая панель
+    // ускоряла мир ×100, закрытая ×10: результат зависел от того, смотришь ли ты на планету.
+    const mul = state.bioSpeed || 100;
     const h = dtYears * mul;
-    const n = Math.max(1, Math.min(12, Math.ceil(h / 300)));
-    const eventsOn = (h / n) <= 800; // на гигантских шагах — только равновесие, без спама войн
+    // v3.20-фикс (P0-4): до 64 подшагов вместо отключения эволюции на больших шагах —
+    // раньше при ×1000+ с открытой панелью tier-up замирал совсем (eventsOn гейтил всё).
+    const n = fast ? 2 : Math.max(1, Math.min(64, Math.ceil(h / 300)));
+    const eventsOn = !fast && (h / n) <= 800; // события — только на разумных подшагах
     for (let i = 0; i < n; i++) bioTick(b, h / n, eventsOn);
-    bioPostTick(b, h);
+    if (!fast) bioPostTick(b, h); // конвои/Исход — только в кадровом пути
   }
 }
 // --- Терраформирование (З43): энергия Кардашева, цели через recoveries ---
-// Семантика: apply ставит параметр мгновенно, а recovery ВЕДЁТ ЦЕЛЬ от старого
-// значения к новому за годы (from=старое → to=новое), tickRecoveries лерпит.
+// v3.20-фикс (P0-5): apply НИЧЕГО не меняет мгновенно — только описывает цель
+// {key, from, to}; значение ведёт tickRecoveries (рампа за years). Раньше apply ставил
+// параметр сразу, а recovery в следующий кадр откатывал к from: «сработало и отменилось».
+// Лёд: рампа iceWater/water — iceFraction не трогаем, его ведёт климат из температуры.
 const TERRA_ACTIONS = [
   { key: 'umbrella', icon: '☀️', label: 'Зонт (альбедо +0.15)', cost: 0.20, years: 400,
-    apply(b) { const old = b.albedo || 0.3; const nv = Math.min(0.95, old + 0.15); b.albedo = nv; return { key: 'albedo', from: old, to: nv }; } },
+    apply(b) { const old = b.albedo || 0.3; return [{ key: 'albedo', from: old, to: Math.min(0.95, old + 0.15) }]; } },
   { key: 'co2down', icon: '🏭', label: 'Процессор CO₂ (−45%)', cost: 0.15, years: 200,
-    apply(b) { const old = b.atmCO2; const nv = old * 0.55; b.atmCO2 = nv; return { key: 'atmCO2', from: old, to: nv }; } },
+    apply(b) { const old = b.atmCO2; return [{ key: 'atmCO2', from: old, to: old * 0.55 }]; } },
   { key: 'co2up', icon: '💨', label: 'Парниковые инжекторы (CO₂ ×1.8)', cost: 0.10, years: 200,
-    apply(b) { const old = b.atmCO2; const nv = Math.min(95, old * 1.8 + 0.3); b.atmCO2 = nv; return { key: 'atmCO2', from: old, to: nv }; } },
+    apply(b) { const old = b.atmCO2; return [{ key: 'atmCO2', from: old, to: Math.min(95, old * 1.8 + 0.3) }]; } },
   { key: 'ice', icon: '🧊', label: 'Ледорубы (лёд → вода)', cost: 0.25, years: 300,
-    apply(b) { const amt = Math.min(b.iceWater || 0.1, 0.8); b.iceWater = Math.max(0, (b.iceWater || 0) - amt); b.water = Math.min(50, b.water + amt); b.iceFraction = Math.max(0, (b.iceFraction || 0) * 0.75); return null; } },
+    apply(b) { const old = b.iceWater || 0.1; const amt = Math.min(old, 0.8);
+      return [{ key: 'iceWater', from: old, to: Math.max(0, old - amt) },
+              { key: 'water', from: b.water || 0, to: Math.min(50, (b.water || 0) + amt) }]; } },
   { key: 'shield', icon: '🛡', label: 'Магнитный щит (→0.8)', cost: 0.30, years: 300,
-    apply(b) { const old = b.magField; const nv = Math.max(0.8, old); b.magField = nv; return { key: 'magField', from: old, to: nv }; } },
+    apply(b) { const old = b.magField; return [{ key: 'magField', from: old, to: Math.max(0.8, old) }]; } },
   { key: 'waterup', icon: '🌊', label: 'Наполнить океаны (+0.3 уровня)', cost: 0.15, years: 250,
-    apply(b) { const old = b.water; const nv = Math.min(50, old + 0.3); b.water = nv; return { key: 'water', from: old, to: nv }; } },
+    apply(b) { const old = b.water; return [{ key: 'water', from: old, to: Math.min(50, old + 0.3) }]; } },
   { key: 'waterdown', icon: '🏜', label: 'Осушить океаны (−0.3 уровня)', cost: 0.15, years: 250,
-    apply(b) { const old = b.water; const nv = Math.max(0, old - 0.3); b.water = nv; return { key: 'water', from: old, to: nv }; } },
+    apply(b) { const old = b.water; return [{ key: 'water', from: old, to: Math.max(0, old - 0.3) }]; } },
   { key: 'vegup', icon: '🌿', label: 'Посев растительности', cost: 0.20, years: 150,
-    apply(b) { const bio = ensureBio(b); const old = bio.vegMod; const nv = Math.min(1, old + 0.5); bio.vegMod = nv; return { key: 'vegMod', from: old, to: nv, holder: bio }; } },
+    apply(b) { const bio = ensureBio(b); const old = bio.vegMod; return [{ key: 'vegMod', from: old, to: Math.min(1, old + 0.5), holder: bio }]; } },
   { key: 'vegdown', icon: '🔥', label: 'Выжечь растительность', cost: 0.05, years: 120,
-    apply(b) { const bio = ensureBio(b); const old = bio.vegMod; const nv = Math.max(0, old - 0.6); bio.vegMod = nv; return { key: 'vegMod', from: old, to: nv, holder: bio }; } },
+    apply(b) { const bio = ensureBio(b); const old = bio.vegMod; return [{ key: 'vegMod', from: old, to: Math.max(0, old - 0.6), holder: bio }]; } },
   { key: 'o2up', icon: '🫧', label: 'Кислород (+4%)', cost: 0.15, years: 200,
-    apply(b) { const old = b.atmO2; const nv = Math.min(40, old + 4); b.atmO2 = nv; return { key: 'atmO2', from: old, to: nv }; } },
+    apply(b) { const old = b.atmO2; return [{ key: 'atmO2', from: old, to: Math.min(40, old + 4) }]; } },
 ];
+// v3.20-фикс (3.2): газовая нормализация — сумма долей атмосферы не превышает 95%.
+// Раньше checkAtmSum только предупреждал в лог; парник разгонялся от завышенной суммы.
+const ATM_GASES = ['atmN2', 'atmO2', 'atmCO2', 'atmH2O', 'atmCH4', 'atmSO2', 'atmNH3'];
+function normalizeAtm(b) {
+  const tot = ATM_GASES.reduce((q, k) => q + Math.max(0, b[k] || 0), 0);
+  if (!(tot > 95) || !(tot > 0)) return;
+  const f = 95 / tot;
+  for (const k of ATM_GASES) if (b[k]) b[k] *= f;
+}
 function terraAction(b, key) {
   const A = TERRA_ACTIONS.find(a => a.key === key);
   if (!A) return;
   const bio = ensureBio(b);
-  if (bio.res.nrg < A.cost) { navShowToast('⚡ Недостаточно энергии цивилизаций (' + bio.res.nrg.toFixed(2) + ' < ' + A.cost + ')', 2600); return; }
+  if (bio.res.nrg < A.cost) { navShowToast('⚡ Недостаточно энергии (' + bio.res.nrg.toFixed(2) + ' < ' + A.cost + ')', 2600); return; }
   bio.res.nrg -= A.cost;
-  const r = A.apply(b);
-  if (r) (state.recoveries = state.recoveries || []).push({ b: r.holder || b, key: r.key, from: r.from, to: r.to, years: A.years, elapsed: 0 });
+  const targets = A.apply(b) || [];
+  state.recoveries = state.recoveries || [];
+  for (const t of targets) {
+    const holder = t.holder || b;
+    // одна рампа на ключ: новый проект ПЕРЕНАЦЕЛИВАЕТ старый (раньше два recovery
+    // на один ключ дёргали параметр в порядке массива)
+    state.recoveries = state.recoveries.filter(r => !(r.b === holder && r.key === t.key));
+    state.recoveries.push({ b: holder, body: b, onBio: !!t.holder, key: t.key, from: t.from, to: t.to, years: A.years, elapsed: 0 });
+  }
+  normalizeAtm(b);
   bioLog(b, '🏗 ' + A.icon + ' ' + A.label + ' — цель через ' + A.years + ' лет (−' + A.cost + ' энергии)', 'terra');
   logEvent('🏗 ' + b.name + ': терраформинг — ' + A.label);
   if (typeof PlanetUI !== 'undefined' && PlanetUI.open) PlanetUI.dirty = true;
@@ -5915,9 +5971,15 @@ function hqEnter(b) {
       swapTex(t);
     });
   }
-  hq.light = new THREE.DirectionalLight(0xffffff, 3.0); // нейтральный белый: не желтит текстуру
-  hq.light.target = b.mesh;
-  scene.add(hq.light); scene.add(hq.light.target);
+  // v3.20-фикс (P0-1): раньше light.target = b.mesh, и scene.remove(hq.light.target) при
+  // закрытии вынимал ПЛАНЕТУ из графа сцены — исчезала из 3D-вида до смены пресета.
+  // Теперь target — собственный Object3D. P2: конус SpotLight вместо полного
+  // DirectionalLight — HQ-подсветка больше не меняет вид всей системы.
+  hq.light = new THREE.SpotLight(0xffffff, 4.0, 0, 0.8, 0.35, 0); // decay=0 — без затухания
+  hq.lightTarget = new THREE.Object3D();
+  hq.light.target = hq.lightTarget;
+  hq.lightTarget.position.copy(b.mesh.position);
+  scene.add(hq.light); scene.add(hq.lightTarget);
   b.axialSpeed = Math.max(b.axialSpeed, 0.35); // естественное вращение: не форсируем быстрый спин
   controls.enablePan = false; // панорамирование мешает прицеливанию
   // --- ручное вращение по оси: тянем планету мышью — она крутится вокруг своей оси ---
@@ -5952,10 +6014,10 @@ function hqEnter(b) {
 function aimAtGap(b) {
   // v3.20: планета — в центре ВИДИМОЙ области между панелями (канвас шире зазора).
   // Пропорциональная обратная связь по проекции планеты (д direction от camera-right).
-  const cv = renderer.domElement.getBoundingClientRect();
-  const L = document.getElementById('pu-col-left').getBoundingClientRect();
-  const R = document.getElementById('pu-col-right').getBoundingClientRect();
-  const gx = (L.right + R.left) / 2, gy = (L.top + L.bottom) / 2;
+  // v3.20-фикс (P1-7): кэш прямоугольников (3×getBoundingClientRect каждый кадр = reflow)
+  if (!_puRects.ok) puRefreshRects();
+  if (!_puRects.ok) return;
+  const cv = _puRects.cv, gx = _puRects.gx, gy = _puRects.gy;
   const wantX = (gx - cv.x) / cv.width;            // 0..1 по ширине канваса
   const wantY = 1 - (gy - cv.y) / cv.height;       // 0..1 снизу вверх
   const v = b.mesh.position.clone().project(camera);
@@ -5966,8 +6028,8 @@ function aimAtGap(b) {
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
   const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
   const desired = b.mesh.position.clone()
-    .add(right.multiplyScalar((px - wantX) * halfW * 16)) // калибровка: k_eff = 1/(2·halfW), фактор сдвига ≤0.8 — устойчиво
-    .add(up.multiplyScalar((py - wantY) * halfH * 16));
+    .add(right.multiplyScalar((px - wantX) * halfW * 4)) // v3.20-фикс (P1-7): 16→4 — 0.2/кадр с lerp 0.1, без рыскания
+    .add(up.multiplyScalar((py - wantY) * halfH * 4));
   controls.target.lerp(desired, 0.1);
 }
 function hqExit() {
@@ -5984,7 +6046,7 @@ function hqExit() {
   controls.enablePan = true;
   if (b.mesh) b.mesh.material.color.copy(hq.origColor); // вернуть климат-раскраску
   if (hq._ls) for (const [n, f] of hq._ls) window.removeEventListener(n, f, true);
-  scene.remove(hq.light); scene.remove(hq.light.target);
+  scene.remove(hq.light); scene.remove(hq.lightTarget); // target — свой Object3D, планета остаётся в сцене
   hq.light.dispose(); hq.geo.dispose(); // HQ-текстура живёт в кэше — не диспоузим
   PlanetUI.hq = null;
 }
@@ -6019,7 +6081,7 @@ function openPlanetUI() {
   hqEnter(b); // v3.20: HQ-форма (геометрия+текстура+прожектор+спин) на время интерфейса
   document.getElementById('planet-ui').classList.add('open');
   buildSeedMenu(); puRenderSpecies(); puRenderLog(); puRenderKPI(true);
-  if (!PlanetUI.raf) puLoop();
+  puRefreshRects(); // v3.20-фикс (P1-7): кэш прямоугольников для прицела
   logEvent('🪐 Интерфейс планеты: ' + b.name);
 }
 function closePlanetUI() {
@@ -6046,16 +6108,25 @@ function puRenderKPI(force) {
   const veg = vegFracOf(b);
   document.getElementById('pu-title').textContent = '🪐 ' + b.name + ' — интерфейс планеты';
   const pop = bio.species.filter(s => s.tier >= 3).reduce((q, s) => q + s.pop, 0);
+  // v3.20-фикс (P2): прогресс эволюции до следующего tier — раньше непонятно, ждать
+  // цивилизацию ещё час или пять минут (пороги 0.15–12 млн био-лет).
+  const TIER_NEED = [3e6, 8e6, 1.2e7, 1.5e5, 1e5];
+  const evo = bio.species.reduce((mx, s) => s.tier >= 5 ? mx : Math.max(mx, clamp(s.age / (TIER_NEED[s.tier] || 1e6), 0, 1)), 0);
   document.getElementById('pu-kpis').innerHTML = [
     'T <b>' + T + ' K</b>', 'Вода <b>' + b.water.toFixed(1) + '</b>', 'O₂ <b>' + (b.atmO2 || 0).toFixed(1) + '%</b>',
     'CO₂ <b>' + (b.atmCO2 || 0).toFixed(1) + '%</b>', 'Альбедо <b>' + (b.albedo || 0).toFixed(2) + '</b>',
     'Магн. <b>' + (b.magField || 0).toFixed(2) + '</b>', 'Растит. <b>' + Math.round(veg * 100) + '%</b>',
     'Видов <b>' + bio.species.length + '</b>', pop > 0 ? 'Нас. <b>' + bioFmtPop(pop) + '</b>' : 'Нас. <b>—</b>',
+    evo > 0 ? '⏫ Эволюция <b>' + Math.round(evo * 100) + '%</b>' : '⏫ Эволюция <b>—</b>',
   ].map(s => '<span class="pu-kpi">' + s + '</span>').join('');
   // ресурсы
-  const bars = [['Минералы', bio.res.min, '#b9a06b'], ['Биомасса', bio.res.bio, '#4ade80'], ['⚡ Энергия', bio.res.nrg, '#4fd8ff']];
+  // v3.20-фикс (P1-6): энергия — из 8 + скорость прироста, чтобы видно «ждать 5 с или 5 минут»
+  const civPowUI = 0.15 + bio.species.reduce((q, s) => q + (s.tier >= 3 && s.pop > 0 ? (s.tier >= 4 ? (s.pop / 1e6) * (1 + b.kardashev) : 1.0) : 0), 0);
+  const nrgRate = 0.0015 * civPowUI * (state._lastDtYears || 0) * (state.bioSpeed || 100) * 60; // ≈за секунду реального времени
+  const bars = [['Минералы', bio.res.min, '#b9a06b', null], ['Биомасса', bio.res.bio, '#4ade80', null],
+    ['⚡ Энергия ' + bio.res.nrg.toFixed(1) + '/8', bio.res.nrg / 8, '#4fd8ff', '+' + nrgRate.toFixed(2) + '/с']];
   document.getElementById('pu-res').innerHTML = bars.map(x =>
-    '<div class="lbl"><span>' + x[0] + '</span><span>' + Math.round(x[1] * 100) + '%</span></div><div class="bar"><i style="width:' + Math.round(x[1] * 100) + '%;background:' + x[2] + '"></i></div>').join('');
+    '<div class="lbl"><span>' + x[0] + '</span><span>' + (x[3] ? x[3] + ' · ' : '') + Math.round(x[1] * 100) + '%</span></div><div class="bar"><i style="width:' + Math.round(clamp(x[1], 0, 1) * 100) + '%;background:' + x[2] + '"></i></div>').join('');
   // терра-кнопки: активность по энергии
   document.querySelectorAll('#pu-terra .pu-btn').forEach(btn => {
     const A = TERRA_ACTIONS.find(a => a.key === btn.dataset.terra);
@@ -6079,6 +6150,8 @@ function puRenderSpecies(now) {
     const fb = [['T', f.T], ['вода', f.wat], ['O₂', f.o2], ['раст', f.veg], ['рес', f.res]].map(x =>
       '<div class="fb" title="' + x[0] + ': ' + Math.round(x[1] * 100) + '%"><i style="height:' + Math.round(x[1] * 100) + '%"></i><span>' + x[0] + '</span></div>').join('');
     const host = Object.values(s._host || {}).reduce((q, v) => q + v, 0);
+    const needT = [3e6, 8e6, 1.2e7, 1.5e5, 1e5][s.tier] || 1e6;
+    const progT = s.tier >= 5 ? 1 : clamp(s.age / needT, 0, 1); // v3.20 (P2): прогресс до следующего tier
     return '<div class="pu-sp-row" data-sp="' + s.id + '">' +
       '<div class="pu-sp-top"><span class="pu-sp-dot" style="background:' + s.col + '"></span>' +
       '<span class="pu-sp-name" title="' + s.name + '">' + TIER_ICON[s.tier] + ' ' + s.name + '</span>' +
@@ -6087,6 +6160,7 @@ function puRenderSpecies(now) {
       '<div class="pu-sp-meta"><span>' + HAB_ICON[s.habitat] + (s.habitat === 'both' ? ' суша+вода' : (s.habitat === 'land' ? ' суша' : ' вода')) + '</span>' +
       '<span>⚔ ' + (s.combat * s.traits.combat).toFixed(1) + '</span><span>🛡 ' + (s.vital * s.traits.vital).toFixed(2) + '</span>' +
       '<span>🌱 ' + (s.repro * s.traits.repro).toFixed(2) + '</span>' +
+      '<span title="возраст вида к порогу следующего tier">⏫ ' + (s.tier >= 5 ? 'max' : 'tier ' + s.tier + '→' + (s.tier + 1) + ' ' + Math.round(progT * 100) + '%') + '</span>' +
       (s.tier >= 3 ? '<span>⚙ техн. ' + Math.round(s.tech * 100) + '%</span>' + (host > 0.3 ? '<span style="color:#ff9b6b">😾 враждебность ' + Math.round(Math.min(100, host * 33)) + '%</span>' : '') : '') +
       (s.origin === 'hybrid' ? '<span>💘 гибрид</span>' : (s.origin === 'evolved' ? '<span>🧬 эволюция</span>' : '')) + '</div>' +
       '<div class="pu-fitbars">' + fb + '</div></div>';
@@ -6213,9 +6287,20 @@ function puDrawSurface(b) {
   // рамка-виньетка
   g.strokeStyle = 'rgba(79,216,255,0.22)'; g.strokeRect(1, 1, W - 2, H - 2);
 }
+// v3.20-фикс (P1-7): один RAF на приложение — puLoop вызывается из animate (ветка
+// режима планеты), а не своим requestAnimationFrame поверх главного цикла.
+const _puRects = { cv: null, gx: 0, gy: 0, ok: false };
+function puRefreshRects() {
+  try {
+    const cv = renderer.domElement.getBoundingClientRect();
+    const L = document.getElementById('pu-col-left').getBoundingClientRect();
+    const R = document.getElementById('pu-col-right').getBoundingClientRect();
+    _puRects.cv = cv; _puRects.gx = (L.right + R.left) / 2; _puRects.gy = (L.top + L.bottom) / 2; _puRects.ok = true;
+  } catch (e) { _puRects.ok = false; }
+}
+window.addEventListener('resize', () => { if (PlanetUI.open) puRefreshRects(); });
 function puLoop() {
-  PlanetUI.raf = requestAnimationFrame(puLoop);
-  if (!PlanetUI.open) { cancelAnimationFrame(PlanetUI.raf); PlanetUI.raf = 0; return; }
+  if (!PlanetUI.open) return;
   const b = puBody();
   if (!b) { closePlanetUI(); return; }
   // v3.20-фикс: планета продолжает лететь по орбите — тащим камеру вместе с ней,
@@ -6229,8 +6314,14 @@ function puLoop() {
     if (_fly.p1) _fly.p1.add(delta);
     if (_fly.t1) _fly.t1.add(delta);
   }
-  if (PlanetUI.hq && PlanetUI.hq.light) PlanetUI.hq.light.position.copy(camera.position); // прожектор от взгляда
-  if (_fly.t >= 1) { try { PlanetUI._aimN = (PlanetUI._aimN || 0) + 1; aimAtGap(b); } catch (e) { console.error('aimAtGap:', e); } } // прицел в центр зазора
+  const _hq = PlanetUI.hq;
+  if (_hq && _hq.light) { _hq.light.position.copy(camera.position); if (_hq.lightTarget) _hq.lightTarget.position.copy(b.mesh.position); } // прожектор от взгляда
+  // v3.20-фикс (P1-7): прицел раз в 3 кадра; warn без спама в консоль
+  PlanetUI._aimF = (PlanetUI._aimF || 0) + 1;
+  if (_fly.t >= 1 && PlanetUI._aimF % 3 === 0) {
+    try { PlanetUI._aimN = (PlanetUI._aimN || 0) + 1; aimAtGap(b); }
+    catch (e) { if (!PlanetUI._aimErrOnce) { PlanetUI._aimErrOnce = true; console.warn('aimAtGap:', e); } }
+  }
   const _t0 = performance.now();
   puDrawSurface(b);
   PlanetUI._drawMs = performance.now() - _t0;
@@ -6410,6 +6501,7 @@ function simulate(dtSec) {
   state.simYears += dtYears;
   updateThermodynamics(dtYears);
   updateLife(dtYears);
+  state._lastDtYears = dtYears; // v3.20 (§5): для debugHUD и показателя прироста энергии
   bioTickGlobal(dtYears); // v3.20: биосферы (те же годы симуляции × скорость интерфейса)
   tickRecoveries(dtYears); // З6: восстановление параметров после событий
   updateVisuals(dtSec);
@@ -6724,7 +6816,7 @@ function loadPreset(systemKey) {
 // ============================================================================
 function serializeScene() {
   return JSON.stringify({
-    version: 3,
+    version: 4, // v3.20-фикс (P1-8): recoveries/projects переживают перезагрузку
     savedAt: Date.now(), // v3.20: контроль свежести сейва при отладке
     simYears: state.simYears,
     starType: state.starType, starAge: state.starAge, starPhase: state.starPhase, starLum: state.starLum,
@@ -6748,6 +6840,14 @@ function serializeScene() {
       iceFraction: b.iceFraction, iceWater: b.iceWater || 0, tempAnomaly: b.tempAnomaly, anomalyTau: b.anomalyTau, // S3.1
       bio: b.bio ? bioSerialize(b.bio) : null, // v3.20: биосфера (виды, колонии, ресурсы)
     })),
+    // v3.20-фикс (P1-8): проекты терраформинга и события (recoveries) и ставка экологии
+    // в сейве — раньше F5 молча стирал прогресс (рампа обрывалась на середине навсегда).
+    bioSpeed: state.bioSpeed || 100,
+    recoveries: (state.recoveries || []).map(r => {
+      const bb = (r.body && r.body.position) ? r.body : ((r.b && r.b.position) ? r.b : null); // body-объект (holder bio — по ссылке body)
+      return { bi: state.bodies.indexOf(bb), onBio: !!r.onBio,
+        key: r.key, from: r.from, to: r.to, years: r.years, elapsed: r.elapsed };
+    }).filter(r => r.bi >= 0),
     // v3.19/1.2: станция «МИР-2» переживает перезагрузку. Ссылка на тело — по
     // индексу (id при восстановлении пересоздаются).
     station: (typeof NAV !== 'undefined' && NAV.station) ? {
@@ -6774,7 +6874,7 @@ function restoreScene() {
     // Ф98: версия сейва: v3 — текущая; более старые совместимы (миграций пока нет),
     // будущие версии — ветка миграции здесь.
     if (data.version === undefined) data.version = 0;
-    if (data.version > 3) navShowToast('⚠ Сейв из более новой версии — возможны несоответствия', 3500);
+    if (data.version > 4) navShowToast('⚠ Сейв из более новой версии — возможны несоответствия', 3500);
     const num = (v, d) => (Number.isFinite(v) ? v : d); // защита от битых чисел (NaN травит N-body)
     for (const b of state.bodies) removeBodyVisual(b);
     state.bodies = [];
@@ -6811,9 +6911,17 @@ function restoreScene() {
       if (s.targetMass != null) b._targetMass = num(s.targetMass, b.mass);
       if (s.targetRadiusV != null) b._targetRadiusV = num(s.targetRadiusV, b.radius);
       if (s.bio) b.bio = bioDeserialize(s.bio); // v3.20: биосфера переживает перезагрузку
-      state.recoveries = state.recoveries || []; // сейвы старых версий могли не вернуть поле
       state.bodies.push(b);
     }
+    // v3.20-фикс (P1-8): восстановление проектов терраформинга + санитайзеры num()
+    state.recoveries = (Array.isArray(data.recoveries) ? data.recoveries : []).map(r => {
+      const body = state.bodies[r.bi];
+      if (!body || !Number.isFinite(r.from) || !Number.isFinite(r.to)) return null;
+      const holder = r.onBio ? (body.bio || ensureBio(body)) : body;
+      return { b: holder, body, onBio: !!r.onBio, key: String(r.key || ''),
+        from: num(r.from, 0), to: num(r.to, 0), years: Math.max(1, num(r.years, 200)), elapsed: Math.max(0, num(r.elapsed, 0)) };
+    }).filter(Boolean);
+    if (data.bioSpeed) state.bioSpeed = clamp(Math.round(num(data.bioSpeed, 100)), 1, 1000);
     // v3.19/1.2: станция «МИР-2» восстанавливается из сейва (без очков и тостов)
     if (data.station && typeof NAV !== 'undefined') spawnStationFromSave(data.station);
     refreshAllOrbits();
@@ -7824,8 +7932,24 @@ function applySculptPos(pv) {
     const aCand = SCULPT.mode === 'circ' ? r : sol.a;
     const aSnap = snapA(aCand, b, mu);
     if (aSnap) {
-      if (SCULPT.mode === 'circ') r = aSnap;
-      else r = 2 / ((speed * speed) / mu + 1 / aSnap); // vis-viva наоборот
+      // v3.20-фикс (3.5): магнит при сохранении модуля скорости может увести перигей
+      // внутрь звезды (или дать e ≥ 1) — проверяем орбиту снапа и отменяем привязку.
+      let eSnap = 0, okSnap = true;
+      if (SCULPT.mode !== 'circ') {
+        const vv = SCULPT.mode === 'keep' ? SCULPT.v0Speed : speed;
+        const E = vv * vv / 2 - mu / aSnap, L = aSnap * vv;
+        eSnap = Math.sqrt(Math.max(0, 1 + 2 * E * L * L / (mu * mu)));
+        okSnap = eSnap < 0.999;
+      }
+      const qSnap = aSnap * (1 - Math.min(eSnap, 0.999));
+      if (okSnap && qSnap > rRealMin) {
+        if (SCULPT.mode === 'circ') r = aSnap;
+        else r = 2 / ((speed * speed) / mu + 1 / aSnap); // vis-viva наоборот
+        SCULPT._snapWarned = false;
+      } else if (!SCULPT._snapWarned || performance.now() - SCULPT._snapWarned > 2000) {
+        SCULPT._snapWarned = performance.now();
+        navShowToast('🧲 Магнит: резонанс уводит перигей внутрь звезды (e=' + eSnap.toFixed(2) + ') — привязка отменена', 2400);
+      }
     }
   }
   r = clamp(r, 0.02, 150);
@@ -8301,6 +8425,7 @@ function animate() {
   relaxBodies(dt); // Ф38: релаксация по реальному времени, работает и на паузе
   updateFlyTo(dt); // v3.20: прилёт камеры в интерфейс планеты и возврат
   simulate(dt);
+  if (PlanetUI.open) puLoop(); // v3.20-фикс (P1-7): один RAF — режим планеты как ветка цикла
   // v3.20-фикс: во время полёта камерой владеет flyTo — controls.update() каждый кадр
   // перезаписывал позицию (планета уходила из кадра). Орбита возвращается по завершении.
   if (_fly.t >= 1 && !(NAV.on && NAV.camMode !== 0) && !(NAV._arriveT > 0)) controls.update(); // Ф60+Ф103: аутро владеет камерой
@@ -8327,6 +8452,32 @@ function animate() {
   frameCount++; tFps += dt;
   if (tFps >= 1) { fps = Math.round(frameCount / tFps); frameCount = 0; tFps = 0;
     const el = document.getElementById('hud-fps'); if (el) el.textContent = fps + ' fps · ' + state.bodies.length + ' тел'; }
+  debugHUDTick(dt); // v3.20 (§5): отладка «какая подсистема не тикает» (?debug)
+}
+// ============================================================================
+//  v3.20 (§5 ревью): debugHUD по ?debug — мгновенно видно, какая подсистема не тикает:
+//  dtEco=0 при живом dtYears → рассинхрон; nrg не растёт → энергия; tex растёт при
+//  открытиях HQ → утечка. Обновление 4×/с.
+// ============================================================================
+let _dbgEl = null, _dbgT = 0;
+function debugHUDTick(dt) {
+  if (!location.search.includes('debug')) return;
+  if (!_dbgEl) {
+    _dbgEl = document.createElement('div');
+    _dbgEl.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;background:rgba(4,9,16,.88);color:#9fdcff;font:11px/1.5 monospace;padding:8px 10px;border:1px solid rgba(79,216,255,.35);border-radius:6px;pointer-events:none;white-space:pre';
+    document.body.appendChild(_dbgEl);
+  }
+  _dbgT += dt;
+  if (_dbgT < 0.25) return;
+  _dbgT = 0;
+  let nrgSum = 0, sp = 0;
+  for (const b of state.bodies) if (b.bio) { sp += b.bio.species.length; nrgSum += b.bio.res.nrg; }
+  const mem = renderer.info.memory;
+  _dbgEl.textContent = 'sim: dtYears/кадр=' + (state._lastDtYears || 0).toFixed(1)
+    + ' · simYears=' + formatYears(state.simYears) + ' · speed=×' + (state.speed || 1) + (state.paused ? ' [ПАУЗА]' : '')
+    + '\neco: bioSpeed=×' + (state.bioSpeed || 100) + ' · проектов=' + (state.recoveries || []).length + ' · nrgΣ=' + nrgSum.toFixed(2) + '/8'
+    + '\nlife: видов=' + sp
+    + '\nloop: fps=' + fps + ' · geo=' + mem.geometries + ' · tex=' + mem.textures + ' · HQ=' + (PlanetUI.hq ? 'on' : 'off');
 }
 window.addEventListener('pagehide', () => { try { if (state.bodies.length > 0) localStorage.setItem(LS_KEY, serializeScene()); } catch (e) {} });
 if (!restoreScene()) loadSolarSystem();
