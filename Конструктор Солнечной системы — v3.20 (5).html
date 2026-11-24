@@ -3678,11 +3678,13 @@ function applyStarType() {
   const st = STAR_TYPES[type]; if (!st) return;
   const isRG = ageGyr * 1e9 > (STAR_LIFE_MS_GYR[type] || 10) * 1e9;
   state.starType = type; state.starAge = ageGyr * 1e9; state.starPhase = isRG ? 'RG' : 'MS';
-  state.bodies.forEach(b => { if (b.isStar) b._lum0 = b.starLum || null; }); // v3.20 (NEW-5): база светимости под новый возраст
   star.starTypeCode = type;
   star.T_eff = isRG ? 3500 : st.T;
   state.starLum = isRG ? 1000 : st.L;
   star.starLum = state.starLum;
+  star._lum0 = star.starLum; // v3.20-фикс (REV3-1): база светимости снимается ПОСЛЕ присвоения
+  // новой L — раньше снапшот брался до замены класса (G→A давал L=9, а тик откатывал
+  // к старой базе ≈1: класс менял только цвет, климат оставался солнечным).
   if (isRG) star.realRadiusM = R_SUN_M * R_RG_SUN; else star.realRadiusM = R_SUN_M * st.R; // P0-4: 220 R☉ (было 100)
   star.radius = isRG ? orbitVisR(star.realRadiusM / AU_M) : visualRadiusM(star.realRadiusM, true); // Ф107: единая формула (createBody = редактор)
   star.mesh.scale.setScalar(star.radius);
@@ -3791,7 +3793,6 @@ function tickRecoveries(dtYears) {
     r.elapsed += dtYears;
     const k = Math.min(1, r.elapsed / r.years);
     r.b[r.key] = r.from + (r.to - r.from) * k;
-    if (r.key.indexOf('atm') === 0) normalizeAtm(r.b, r.b); // 3.2: газовые рампы держат сумму ≤100%
     if (k >= 1) state.recoveries.splice(i, 1);
   }
 }
@@ -5101,7 +5102,11 @@ function updateLife(dtYears) {
 // ============================================================================
 function jumpYears(totalYears) {
   if (NAV.on) exitNavMode(); // P1: перемотка в режиме навигатора — корректный выход
-  for (const b of state.bodies) if (b.bio) b._jumpTiers = null; // v3.20 (NEW-2): лимит tier-up за этот прыжок
+  // v3.20-фикс (REV3-5): бюджет tier-up зависит от объёма прыжка — 1 млн лет → 1,
+  // 1 млрд → 3. Раньше фиксированный лимит «1 на прыжок» давал обратный эксплойт:
+  // пять кликов «⏩ 1 млн» = +5 тиров, один «⏩ 1 млрд» = +1.
+  const tierBudget = clamp(Math.round(Math.log10(Math.max(totalYears, 1e5) / 1e5)), 1, 3);
+  for (const b of state.bodies) if (b.bio) { b._jumpTiers = new Map(); b._jumpTierBudget = tierBudget; }
 
   // W6-З47: снимок до перемотки — после покажем дифф-бейджи (ΔT, Δice, Δstage).
   // Перемотка была чёрным ящиком: числа менялись, но что случилось — не видно.
@@ -5127,9 +5132,12 @@ function jumpYears(totalYears) {
     // без событий — равновесие (логистика точна на любом шаге) + эволюция (Poisson-нормирована).
     bioTickGlobal(h, true);
     tickRecoveries(h); // проекты терраформинга дотягиваются за те же годы
+    // v3.20-фикс (REV3-3): часы идут ВНУТРИ перемотки. Раньше state.simYears += totalYears
+    // стоял после цикла: гейт Исхода (simYears − s._exodusT > 20) читал замороженные часы
+    // и ни разу не срабатывал за ⏩; bioLog/logEvent штамповали все события одним годом.
+    state.simYears += h;
   }
   advanceOrbitsAnalytic(totalYears); // R3-19: орбиты тоже уходят вперёд (аналитически)
-  state.simYears += totalYears;
   recenterOnStar(); // Ф39
   refreshAllOrbits();
   updateVisuals(0);
@@ -5563,7 +5571,10 @@ function bioTick(b, h, eventsOn, fast) {
     let p1;
     if (rNet > 0) {
       const Keff = Math.max(1, K * rNet / r);
-      p1 = Keff / (1 + (Keff / p0 - 1) * Math.exp(-rNet * h));
+      // v3.20-фикс (REV3-6): кламп роста e^{−r·h} ≥ e^{−3} — при крупном подшаге
+      // логистика больше не прыгает к Keff за один тик (храповик «вверх мгновенно,
+      // вниз по 50%» смещал равновесие к потолку). Симметрично клампу спада −0.7.
+      p1 = Keff / (1 + (Keff / p0 - 1) * Math.exp(-Math.min(rNet * h, 3)));
     } else {
       // v3.20-фикс (NEW-1): кламп экспоненты — не более ~50% потерь за подшаг.
       // В fast-режиме ⏩ подшаг до 2.5 млн био-лет: exp(−0.05·2.5e6) = 0 стирал вид
@@ -5756,8 +5767,10 @@ function bioEvolution(b, h, T, veg, fast) {
     // возводил микроба в сверхцивилизацию за один клик (возрастные ворота уже
     // перекрыты накопленным s.age). Список сбрасывается в jumpYears.
     if (fast) {
-      if (!b._jumpTiers) b._jumpTiers = new Set();
-      if (b._jumpTiers.has(s.id)) continue;
+      // REV3-5: не более b._jumpTierBudget подъёмов на вид за перемотку
+      // (1 млн лет → 1 tier, 10 млн → 2, 100 млн+ → 3; сброс в jumpYears).
+      if (!b._jumpTiers) b._jumpTiers = new Map();
+      if ((b._jumpTiers.get(s.id) || 0) >= (b._jumpTierBudget || 1)) continue;
     }
     const need = [3e6, 8e6, 1.2e7, 1.5e5, 1e5][s.tier] || 1e6;
     if (s.age < need) continue;
@@ -5772,7 +5785,7 @@ function bioEvolution(b, h, T, veg, fast) {
     // λ = 0.0069/год — якорь старой формулы (0.5 за 100 лет). Раньше скорость эволюции
     // была функцией размера шага симуляции.
     if (!ok || Math.random() > Math.min(0.95, 1 - Math.exp(-0.0069 * h))) continue;
-    if (fast) b._jumpTiers.add(s.id); // NEW-2: лимит израсходован до конца перемотки
+    if (fast) b._jumpTiers.set(s.id, (b._jumpTiers.get(s.id) || 0) + 1); // REV3-5: израсходован шаг бюджета
     const tplNext = SEED_CATALOG.find(t => t.tier === s.tier + 1);
     s.tier += 1;
     if (tplNext) {
@@ -5939,16 +5952,6 @@ const TERRA_ACTIONS = [
 // v3.20-фикс (3.2): газовая нормализация — сумма долей атмосферы не превышает 95%.
 // Раньше checkAtmSum только предупреждал в лог; парник разгонялся от завышенной суммы.
 const ATM_GASES = ['atmN2', 'atmO2', 'atmCO2', 'atmH2O', 'atmCH4', 'atmSO2', 'atmNH3'];
-function normalizeAtm(b, logIt) {
-  // v3.20-фикс (NEW-3): порог 100, а не 95 — пресет Земли 78+21+0.04+1 ≈ 100.04
-  // и раньше молча сжимался до 95 при ЛЮБОМ терра-действии (O₂ — гейт разума).
-  const tot = ATM_GASES.reduce((q, k) => q + Math.max(0, b[k] || 0), 0);
-  if (!(tot > 100.5) || !(tot > 0)) return false;
-  const f = 100 / tot;
-  for (const k of ATM_GASES) if (b[k]) b[k] *= f;
-  if (logIt) bioLog(logIt, '⚖ Состав атмосферы нормализован к 100% (было ' + tot.toFixed(1) + '%)', 'terra');
-  return true;
-}
 function terraAction(b, key) {
   const A = TERRA_ACTIONS.find(a => a.key === key);
   if (!A) return;
@@ -5956,6 +5959,25 @@ function terraAction(b, key) {
   if (bio.res.nrg < A.cost) { navShowToast('⚡ Недостаточно энергии (' + bio.res.nrg.toFixed(2) + ' < ' + A.cost + ')', 2600); return; }
   bio.res.nrg -= A.cost;
   const targets = A.apply(b) || [];
+  const extra = []; // REV3-4: компенсирующие рампы остальных газов
+  // v3.20-фикс (REV3-4): сумму газов держат ЦЕЛИ рампы, а не нормализатор в тике.
+  // Прежний normalizeAtm умножал ВСЕ газы на f<1 каждый тик, а рампа восстанавливала
+  // только свой ключ: нетронутые газы размывались кумулятивно (Венера: SO₂ −27% за
+  // одно «Инжекторы CO₂» — сернокислотная биохимия гибли от размытия, не климата),
+  // и журнал заливался 10–30 записями «⚖» на одно действие.
+  for (const t of targets) {
+    if (t.key.indexOf('atm') !== 0) continue;
+    const others = ATM_GASES.filter(k => k !== t.key).map(k => ({ k, v: Math.max(0, b[k] || 0) }));
+    const oSum = others.reduce((q, o) => q + o.v, 0);
+    if (oSum <= 0) continue;
+    if (t.to > 100) t.to = 100; // абсолютная капа; прочие рампа rest сожмёт пропорционально
+    const rest = (100 - t.to) / oSum; // остальные делят остаток до 100% (рост глав. газа — за их счёт)
+    for (const o of others) {
+      if (targets.some(x => x.key === o.k)) continue; // у целевого газа своя цель
+      extra.push({ key: o.k, from: o.v, to: o.v * rest });
+    }
+  }
+  targets.push(...extra);
   state.recoveries = state.recoveries || [];
   for (const t of targets) {
     const holder = t.holder || b;
@@ -5964,7 +5986,6 @@ function terraAction(b, key) {
     state.recoveries = state.recoveries.filter(r => !(r.b === holder && r.key === t.key));
     state.recoveries.push({ b: holder, body: b, onBio: !!t.holder, key: t.key, from: t.from, to: t.to, years: A.years, elapsed: 0 });
   }
-  if (targets.some(t => t.key.indexOf('atm') === 0)) normalizeAtm(b, b); // NEW-3: только газовые действия трогают состав
   bioLog(b, '🏗 ' + A.icon + ' ' + A.label + ' — цель через ' + A.years + ' лет (−' + A.cost + ' энергии)', 'terra');
   logEvent('🏗 ' + b.name + ': терраформинг — ' + A.label);
   if (typeof PlanetUI !== 'undefined' && PlanetUI.open) PlanetUI.dirty = true;
@@ -6865,7 +6886,7 @@ function serializeScene() {
       seed: b.seed ?? null,                          // W0-З29: детерминизм процедурных миров
       axialTilt: b.axialTilt || 0, axialSpeed: b.axialSpeed || 0.3, // v3.0
       kardashev: b.kardashev || 0, dysonProgress: b.dysonProgress || 0, popul: b.popul || 0, // v3.0+З6
-      starTypeCode: b.starTypeCode || null, starLum: b.starLum || null, // v3.0
+      starTypeCode: b.starTypeCode || null, starLum: b.starLum || null, lum0: b._lum0 || null, // v3.0 + REV3-2
       moons: (b.moons || []).map(m => ({ name: m.name, massE: m.massE, distE: m.distE, color: m.color, speed: m.speed, angle: m._angle })),
       life: { stage: b.life.stage, bioTime: b.life.bioTime, hasIntelligence: b.life.hasIntelligence, cooldown: b.life.cooldown, chem: b.life.chem || null },
       iceFraction: b.iceFraction, iceWater: b.iceWater || 0, tempAnomaly: b.tempAnomaly, anomalyTau: b.anomalyTau, // S3.1
@@ -6927,7 +6948,13 @@ function restoreScene() {
         moons: Array.isArray(s.moons) ? s.moons.map(m => ({ name: String(m.name || 'Луна'), massE: num(m.massE, 0.01), distE: Math.max(0.5, num(m.distE, 3)), color: num(m.color, 0xc0c0c0), speed: num(m.speed, 0.4), angle: num(m.angle, 0) })) : [], // v3.0 + P1: num() санитайзер для лун (distE>0.5 — иначе NaN/0 ломали кинематику)
         x: num(s.x, 1), y: num(s.y, 0), z: num(s.z, 0), vx: num(s.vx, 0), vy: num(s.vy, 0), vz: num(s.vz, 0),
       });
-      if (s.isStar) { b.starTypeCode = s.starTypeCode || 'G'; b.starLum = num(s.starLum, 1); } // v3.0
+      if (s.isStar) { b.starTypeCode = s.starTypeCode || 'G'; b.starLum = num(s.starLum, 1);
+        // v3.20-фикс (REV3-2): база светимости. Без неё первый тик берёт постаревшую
+        // starLum за L0 и применяет старение ВТОРОЙ раз — +40% за каждую перезагрузку.
+        // Старые сейвы: выводим аналитически L0 = L/(1+0.4·tRel) из возраста.
+        b._lum0 = num(s.lum0, 0) ||
+          (b.starLum / Math.max(1e-9, 1 + 0.4 * (state.starAge || 0) /
+            ((STAR_LIFE_MS_GYR[b.starTypeCode || 'G'] || 10) * 1e9))); } // REV3-2
       b.life.stage = clamp(Math.round(num(s.life && s.life.stage, 0)), 0, 4);
       b.life.bioTime = Math.max(0, num(s.life && s.life.bioTime, 0));
       b.life.hasIntelligence = !!(s.life && s.life.hasIntelligence);
