@@ -3678,6 +3678,7 @@ function applyStarType() {
   const st = STAR_TYPES[type]; if (!st) return;
   const isRG = ageGyr * 1e9 > (STAR_LIFE_MS_GYR[type] || 10) * 1e9;
   state.starType = type; state.starAge = ageGyr * 1e9; state.starPhase = isRG ? 'RG' : 'MS';
+  state.bodies.forEach(b => { if (b.isStar) b._lum0 = b.starLum || null; }); // v3.20 (NEW-5): база светимости под новый возраст
   star.starTypeCode = type;
   star.T_eff = isRG ? 3500 : st.T;
   state.starLum = isRG ? 1000 : st.L;
@@ -3790,7 +3791,7 @@ function tickRecoveries(dtYears) {
     r.elapsed += dtYears;
     const k = Math.min(1, r.elapsed / r.years);
     r.b[r.key] = r.from + (r.to - r.from) * k;
-    if (r.key.indexOf('atm') === 0) normalizeAtm(r.b); // 3.2: газовые рампы держат сумму ≤95%
+    if (r.key.indexOf('atm') === 0) normalizeAtm(r.b, r.b); // 3.2: газовые рампы держат сумму ≤100%
     if (k >= 1) state.recoveries.splice(i, 1);
   }
 }
@@ -4716,8 +4717,12 @@ function updateThermodynamics(dtYears) {
         logEvent('☀️ Звезда покинула главную последовательность — стадия красного гиганта');
         refreshHZRing(); // P0-7: кольцо HZ должно раздвинуться до 23–56 а.е. у гиганта (L=1000)
       } else {
-        // Ф41: светимость накапливается от ВОЗРАСТА звезды (иначе прирост за кадр исчезающе мал)
-        const newLum = Math.max(0.01, (star.starLum || 1.0) * (1 + 0.4 * state.starAge / Tms));
+        // v3.20-фикс (NEW-5, найден при приёмке ⏩): светимость — ЛИНЕЙНАЯ функция
+        // абсолютного возраста L = L0·(1+0.4·tRel). Прежняя форма L *= (1+0.4·age/Tms)
+        // умножала ТЕКУЩУЮ L каждый тик: за ⏩ 10 млн лет произведение ∏(1+0.4·age/Tms)
+        // давало e² ≈ ×7.6 света — Земля вскипала (512 K) без всякой причины.
+        const L0 = star._lum0 || (star._lum0 = star.starLum || 1.0);
+        const newLum = Math.max(0.01, L0 * (1 + 0.4 * state.starAge / Tms));
         const dL = newLum / (state.starLum || 1);
         star.starLum = newLum;
         recomputeStarLum(); // P0-7: сумма всех звёзд (для binary)
@@ -5096,6 +5101,8 @@ function updateLife(dtYears) {
 // ============================================================================
 function jumpYears(totalYears) {
   if (NAV.on) exitNavMode(); // P1: перемотка в режиме навигатора — корректный выход
+  for (const b of state.bodies) if (b.bio) b._jumpTiers = null; // v3.20 (NEW-2): лимит tier-up за этот прыжок
+
   // W6-З47: снимок до перемотки — после покажем дифф-бейджи (ΔT, Δice, Δstage).
   // Перемотка была чёрным ящиком: числа менялись, но что случилось — не видно.
   const snap = new Map();
@@ -5502,7 +5509,7 @@ function bioStressOf(b) {
   if (b.tempAnomaly > 8 || b.tempAnomaly < -12) stress += 0.3;
   return stress;
 }
-function bioTick(b, h, eventsOn) {
+function bioTick(b, h, eventsOn, fast) {
   // h — шаг в годах (≤ ~400); eventsOn — битвы/мутации/эволюция (на гигантских шагах только равновесие)
   if (h <= 0 || !b.bio || !b.bio.species.length) return;
   const bio = ensureBio(b);
@@ -5558,7 +5565,12 @@ function bioTick(b, h, eventsOn) {
       const Keff = Math.max(1, K * rNet / r);
       p1 = Keff / (1 + (Keff / p0 - 1) * Math.exp(-rNet * h));
     } else {
-      p1 = p0 * Math.exp(rNet * h); // чистое вымирание (смертность выше рождаемости)
+      // v3.20-фикс (NEW-1): кламп экспоненты — не более ~50% потерь за подшаг.
+      // В fast-режиме ⏩ подшаг до 2.5 млн био-лет: exp(−0.05·2.5e6) = 0 стирал вид
+      // целиком за один тик любой кратковременной просадки фитнеса (дискретизация
+      // превращала обратимое в необратимое). Вымирание остаётся неумолимым при
+      // постоянном стрессе: −50% × подшаги подряд; в кадровом пути кламп не активен.
+      p1 = p0 * Math.exp(Math.max(rNet * h, -0.7)); // вымирание, ≤~50%/подшаг
     }
     s.pop = Math.min(Math.max(p1, 0), 1e15);
     // --- колонии: масштабирование, деление, враждебность ---
@@ -5589,7 +5601,7 @@ function bioTick(b, h, eventsOn) {
   if (eventsOn) bioMutations(b, h, stress, T, veg);
   // --- эволюция (tier-up): ВСЕГДА (v3.20-фикс P0-4) — вероятности нормированы по годам,
   // биоEvolution точен на любом шаге; eventsOn гейтит только битвы/мутации ---
-  bioEvolution(b, h, T, veg);
+  bioEvolution(b, h, T, veg, fast);
   // --- вымирание вида ---
   for (let i = S.length - 1; i >= 0; i--) {
     const s = S[i];
@@ -5734,11 +5746,19 @@ function bioMutations(b, h, stress, T, veg) {
     }
   }
 }
-function bioEvolution(b, h, T, veg) {
+function bioEvolution(b, h, T, veg, fast) {
   // tier-up: устойчивая популяция + возраст + условия среды (эволюция по ТЗ)
   const bio = ensureBio(b), sea = seaLevelOf(b);
   for (const s of bio.species) {
     if (s.tier >= 5 || s.pop < 0.35 * (s._K || 1) || (s._fitness || 0) < 0.5) continue;
+    // v3.20-фикс (NEW-2): в fast-режиме ⏩ не более ОДНОГО tier-up на вид за вызов
+    // jumpYears — p = 1−exp(−0.0069·2.5e6) ≈ 0.95 на каждом из 2·N подшагов раньше
+    // возводил микроба в сверхцивилизацию за один клик (возрастные ворота уже
+    // перекрыты накопленным s.age). Список сбрасывается в jumpYears.
+    if (fast) {
+      if (!b._jumpTiers) b._jumpTiers = new Set();
+      if (b._jumpTiers.has(s.id)) continue;
+    }
     const need = [3e6, 8e6, 1.2e7, 1.5e5, 1e5][s.tier] || 1e6;
     if (s.age < need) continue;
     let ok = false, msg = '';
@@ -5752,6 +5772,7 @@ function bioEvolution(b, h, T, veg) {
     // λ = 0.0069/год — якорь старой формулы (0.5 за 100 лет). Раньше скорость эволюции
     // была функцией размера шага симуляции.
     if (!ok || Math.random() > Math.min(0.95, 1 - Math.exp(-0.0069 * h))) continue;
+    if (fast) b._jumpTiers.add(s.id); // NEW-2: лимит израсходован до конца перемотки
     const tplNext = SEED_CATALOG.find(t => t.tier === s.tier + 1);
     s.tier += 1;
     if (tplNext) {
@@ -5866,7 +5887,9 @@ function bioTickGlobal(dtYears, fast) {
       // биосферы (bioTick возвращается на пустых species). Иначе терраформинг мёртвого
       // мира заперт: энергии ноль, цивилизаций нет, грант не тикал.
       if (!b.bio) ensureBio(b);
-      b.bio.res.nrg = clamp(b.bio.res.nrg + 0.002 * dtYears * (state.bioSpeed || 100), 0, 8);
+      // v3.20-фикс (NEW-4): грант 0.0005 < производства племени (0.0015·civPow=1) —
+      // раньше сушить планету было выгоднее заселять (0.002 > 0.0015).
+      b.bio.res.nrg = clamp(b.bio.res.nrg + 0.0005 * dtYears * (state.bioSpeed || 100), 0, 8);
       continue;
     }
     // v3.20-фикс (P0-3): одна ставка эволюции для всех планет — раньше открытая панель
@@ -5877,8 +5900,11 @@ function bioTickGlobal(dtYears, fast) {
     // раньше при ×1000+ с открытой панелью tier-up замирал совсем (eventsOn гейтил всё).
     const n = fast ? 2 : Math.max(1, Math.min(64, Math.ceil(h / 300)));
     const eventsOn = !fast && (h / n) <= 800; // события — только на разумных подшагах
-    for (let i = 0; i < n; i++) bioTick(b, h / n, eventsOn);
-    if (!fast) bioPostTick(b, h); // конвои/Исход — только в кадровом пути
+    for (let i = 0; i < n; i++) bioTick(b, h / n, eventsOn, fast);
+    // v3.20-фикс (NEW-1): bioPostTick и в fast — иначе Исход недоступен именно там,
+    // где он сюжетно нужен (красный гигант при ⏩). Внутренний гейт bio._tr ≥ 50
+    // био-лет сам регулирует частоту срабатываний; крупные шаги безопасны.
+    bioPostTick(b, h);
   }
 }
 // --- Терраформирование (З43): энергия Кардашева, цели через recoveries ---
@@ -5913,11 +5939,15 @@ const TERRA_ACTIONS = [
 // v3.20-фикс (3.2): газовая нормализация — сумма долей атмосферы не превышает 95%.
 // Раньше checkAtmSum только предупреждал в лог; парник разгонялся от завышенной суммы.
 const ATM_GASES = ['atmN2', 'atmO2', 'atmCO2', 'atmH2O', 'atmCH4', 'atmSO2', 'atmNH3'];
-function normalizeAtm(b) {
+function normalizeAtm(b, logIt) {
+  // v3.20-фикс (NEW-3): порог 100, а не 95 — пресет Земли 78+21+0.04+1 ≈ 100.04
+  // и раньше молча сжимался до 95 при ЛЮБОМ терра-действии (O₂ — гейт разума).
   const tot = ATM_GASES.reduce((q, k) => q + Math.max(0, b[k] || 0), 0);
-  if (!(tot > 95) || !(tot > 0)) return;
-  const f = 95 / tot;
+  if (!(tot > 100.5) || !(tot > 0)) return false;
+  const f = 100 / tot;
   for (const k of ATM_GASES) if (b[k]) b[k] *= f;
+  if (logIt) bioLog(logIt, '⚖ Состав атмосферы нормализован к 100% (было ' + tot.toFixed(1) + '%)', 'terra');
+  return true;
 }
 function terraAction(b, key) {
   const A = TERRA_ACTIONS.find(a => a.key === key);
@@ -5934,7 +5964,7 @@ function terraAction(b, key) {
     state.recoveries = state.recoveries.filter(r => !(r.b === holder && r.key === t.key));
     state.recoveries.push({ b: holder, body: b, onBio: !!t.holder, key: t.key, from: t.from, to: t.to, years: A.years, elapsed: 0 });
   }
-  normalizeAtm(b);
+  if (targets.some(t => t.key.indexOf('atm') === 0)) normalizeAtm(b, b); // NEW-3: только газовые действия трогают состав
   bioLog(b, '🏗 ' + A.icon + ' ' + A.label + ' — цель через ' + A.years + ' лет (−' + A.cost + ' энергии)', 'terra');
   logEvent('🏗 ' + b.name + ': терраформинг — ' + A.label);
   if (typeof PlanetUI !== 'undefined' && PlanetUI.open) PlanetUI.dirty = true;
@@ -6160,6 +6190,7 @@ function puRenderSpecies(now) {
       '<div class="pu-sp-meta"><span>' + HAB_ICON[s.habitat] + (s.habitat === 'both' ? ' суша+вода' : (s.habitat === 'land' ? ' суша' : ' вода')) + '</span>' +
       '<span>⚔ ' + (s.combat * s.traits.combat).toFixed(1) + '</span><span>🛡 ' + (s.vital * s.traits.vital).toFixed(2) + '</span>' +
       '<span>🌱 ' + (s.repro * s.traits.repro).toFixed(2) + '</span>' +
+      '<span title="возраст вида в био-годах">⏳ ' + formatYears(s.age) + '</span>' +
       '<span title="возраст вида к порогу следующего tier">⏫ ' + (s.tier >= 5 ? 'max' : 'tier ' + s.tier + '→' + (s.tier + 1) + ' ' + Math.round(progT * 100) + '%') + '</span>' +
       (s.tier >= 3 ? '<span>⚙ техн. ' + Math.round(s.tech * 100) + '%</span>' + (host > 0.3 ? '<span style="color:#ff9b6b">😾 враждебность ' + Math.round(Math.min(100, host * 33)) + '%</span>' : '') : '') +
       (s.origin === 'hybrid' ? '<span>💘 гибрид</span>' : (s.origin === 'evolved' ? '<span>🧬 эволюция</span>' : '')) + '</div>' +
@@ -8477,6 +8508,7 @@ function debugHUDTick(dt) {
     + ' · simYears=' + formatYears(state.simYears) + ' · speed=×' + (state.speed || 1) + (state.paused ? ' [ПАУЗА]' : '')
     + '\neco: bioSpeed=×' + (state.bioSpeed || 100) + ' · проектов=' + (state.recoveries || []).length + ' · nrgΣ=' + nrgSum.toFixed(2) + '/8'
     + '\nlife: видов=' + sp
+    + '\nstar: age=' + formatYears(state.starAge || 0) + ' · L=' + (state.starLum || 1).toFixed(3) + ' · phase=' + (state.starPhase || 'MS')
     + '\nloop: fps=' + fps + ' · geo=' + mem.geometries + ' · tex=' + mem.textures + ' · HQ=' + (PlanetUI.hq ? 'on' : 'off');
 }
 window.addEventListener('pagehide', () => { try { if (state.bodies.length > 0) localStorage.setItem(LS_KEY, serializeScene()); } catch (e) {} });
