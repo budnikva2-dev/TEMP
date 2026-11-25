@@ -1,29 +1,20 @@
-YASEEK v15.05 — ПОЛНЫЙ КОД (build 15.05, sw v121, SchemaVersion=9)
-Собрано 25.11.2026 (00:5x UTC+5): база v15.04 + ревью-6: R16/R17.
+YASEEK v15.08 — ПОЛНЫЙ КОД (build 15.08, sw v124, SchemaVersion=10)
+Собрано 25.11.2026 (10:39 UTC+5): база v15.07 + R19: чипс/push на P(t).
 
-v15.05 — сводка (справочники и выравнивания):
-- R16 (п.16): PUT /api/formulas/{id} (Name/Brand/ScoopGrams/Notes) и PUT /api/solids/{id}
-  (Name/Kind/JarGrams/Notes) — переименование безопасно (журнал и склад ссылаются по Id),
-  кэш имён инвалидируется; валидация ScoopGrams > 0 и JarGrams > 0 в POST и PUT
-  (0/отрицательное значение ломало списание склада: perScoop молча фолбэчился на 4.5).
-  DTO: FormulaPut/SolidPut (AppDb). Perm «formulas» — как в POST.
-- R17 (п.17): PUT /api/stock — отрицательные граммы → 400 (как в POST; кламп Math.Max(0,...)
-  маскировал ошибку ввода и давал отрицательную дельту в движениях склада);
-  PUT /api/medplans — «одно из двух» как в POST: Times+IntervalHours одновременно → 400,
-  очистка Times без положительного интервала (нового или прежнего) → 400;
-  BackupService — штамп с секундами «yyyyMMdd-HHmmss» (два снимка в одну минуту больше
-  не перезаписывают друг друга; ретенция Ordinal остаётся корректной);
-  NormalizePostgresUrl — читает ?sslmode= из самой DATABASE_URL (хостинги передают режим
-  в строке подключения; приоритет: параметр → query ?sslmode= → env DB_SSL_MODE → Require,
-  percent-decoding значения); дока в README (SSL-режим Postgres).
-- custom-food (37.4c) — решение владельца «оставить как есть»: НЕ изменено.
-- Тесты +7 (направленные 61/61): IntegrationTests.Formula_solid_put_and_scoop_validation,
-  Stock_put_negative_is_rejected, Medplan_put_one_of_two;
-  AppDbTests.NormalizePostgresUrl_sslmode_from_url_query (×3),
-  NormalizePostgresUrl_parameter_beats_url_query, NormalizePostgresUrl_env_beats_default_when_no_query,
-  Backup_stamp_includes_seconds.
-- Версии: 15.05 (AppBuild.Current), sw v121, ?v=15.05, README.
-
+v15.08 — сводка (R19, единый источник статуса голода):
+- R19-1: статус голода = P(t) движка (HungerModel): новый HungerAlert.StatusOf — green при P<0.35,
+  yellow при P<0.75, red при P≥0.75; эскалация red при t > 1.33×среднего (страховка на необученную
+  модель, Classify-порог). Чипс (app.js hungerInfo→hungerInfoFromEngine) и push-раннер берут статус
+  из одного расчёта; /api/sync отдаёт готовые status/tHours/tAvg — клиент пороги больше не считает.
+- R19-2: кнопки «Да, кормим»/«Нет, каприз» → POST /api/hunger-feedback → калибровка сдвига b
+  (±0.15, кламп ±3) в HungerStates; веса метаболизма кнопками не обучаются (легаси — R21).
+- R19-3: офлайн-fallback: необученная модель (totalN==0) или нет hunger-объекта — старая эвристика
+  (сервер: Classify в Runner; клиент: hungerInfoBase) — согласовано в обоих местах.
+- R19-4: README — раздел «Модель голода (v15.07+)» (формулы, пороги, обучение, fallback).
+- Push-текст дополнен прогнозом «следующий ~через N» из nextAt.
+- Версии: 15.08 (AppBuild.Current), APP_BUILD 15.08, sw v124, ?v=15.08, README.
+- Тесты: направленные 30/30 (HungerAlert+StatusOf, Metabolism, SchemaMigrations, PushStreaming,
+  интеграционный hunger-feedback). Release 0 err. Смоук 15.08. Детали — ПСР часть 45.
 ======================================================================
 ### ФАЙЛ: .gitignore
 
@@ -67,7 +58,7 @@ ENTRYPOINT ["dotnet", "Yaseek.Api.dll"]
 отчёты Excel/PDF. Работает как сайт в любом браузере и ставится на домашний
 экран iPhone/Android.
 
-- **Текущая сборка:** v15.04 (24.11.2026). Серверная версия: `/api/version`, `/health`.
+- **Текущая сборка:** v15.08 (25.11.2026). Серверная версия: `/api/version`, `/health`.
 - **Хостинг:** Amvera (см. «Деплой на Amvera»).
 
 ## Как это устроено
@@ -88,6 +79,35 @@ ENTRYPOINT ["dotnet", "Yaseek.Api.dll"]
   Для приватного Postgres без SSL укажите `?sslmode=Disable` в `DATABASE_URL`
   (или `DB_SSL_MODE=Disable`).
 - **Тесты** — `src/Yaseek.Tests` (xunit).
+
+## Модель голода (v15.07+)
+
+Серверный движок `HungerModel` прогнозирует следующее молочное кормление и отдаёт клиенту
+`hunger`-объект (`/api/sync`). Чипс «Голод» и push-напоминания берут статус из одного
+источника — вероятности P(t) (v15.08):
+
+- **μ(t) = M · E(возраст) · c_b(сегмент) · v(объём)** — ожидаемый интервал, ч (кламп [1.2, 8]).
+  E — приор по возрасту (2.4 … 6 ч); M — личный множитель (EWMA, α=0.05);
+  c_b — циркадные множители ночь/утро/день/вечер с усадкой к 1 (k=6);
+  v = √(последний объём / средний), кламп [0.75, 1.35].
+- **σ** — ширина распределения: EWMA остатков |gap − μ| (α=0.05), кламп [0.2, 1.5];
+  при активной болезни ×1.4.
+- **P(голоден) = 1 / (1 + exp(−((t − μ) / (σ/1.7) + b)))**, где b — калибровочный сдвиг.
+- **Статус**: красный при P ≥ 0.75; жёлтый при P ≥ 0.35; иначе зелёный.
+  Эскалация: при t > 1.33 × среднего интервала (48 ч, дневные концы) — красный вне зависимости
+  от P (страховка на недообученную модель).
+- **Обучение — плотное**: каждое молочное кормление обновляет M / c_b / σ / средний объём.
+  Интервалы < 0.3 ч (двойная запись) и > 24 ч (пропущенный день) не учат; остаток > 1.8·μ
+  винзоризуется (забытая запись не взрывает модель).
+- **Кнопки «Да, кормим» / «Нет, каприз»** (`POST /api/hunger-feedback`) калибруют только b:
+  «голоден» — +0.15, «каприз» — −0.15, кламп [−3, 3] (per-kid, таблица HungerStates).
+  Веса метаболизма (MetabolismWeights) кнопками больше не обучаются.
+- **Офлайн-fallback**: если модель ещё не обучена (меньше 1 учтённого кормления) или
+  hunger-объект не пришёл — старая эвристика (пороги 2 ч / 1.33 × среднего), согласованно
+  на клиенте и в push-раннере.
+- **Поправки к P**: стул ≤ 2 ч назад поднимает P (гастроколический рефлекс, потолок 0.95);
+  активная болезнь расширяет σ ×1.4.
+- **Прогноз в push**: жёлтый/красный дополнены строкой «следующий ~через N ч» из nextAt.
 
 ## Локальный запуск (15 минут)
 
@@ -667,6 +687,14 @@ public class FoodReaction
     public string? ClientId { get; set; }       // v14.23: дедупликация офлайн-очереди (как у Feeds)
 }
 
+public class HungerStateRow
+{
+    [System.ComponentModel.DataAnnotations.Key] // PK: EF-конвенция не видит KidId (имя класса HungerStateRow)
+    public int KidId { get; set; }              // один ребёнок — одна строка состояния
+    public string StateJson { get; set; } = ""; // JSON HungerModel.HungerState
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
 public class Defecation
 {
     public int Id { get; set; }
@@ -684,6 +712,7 @@ public class AppDb(DbContextOptions<AppDb> options) : DbContext(options)
 {
     public DbSet<Kid> Kids => Set<Kid>();
     public DbSet<Feed> Feeds => Set<Feed>();
+    public DbSet<HungerStateRow> HungerStates => Set<HungerStateRow>(); // v15.07 (R18): движок голода — одна строка на ребёнка
     public DbSet<Formula> Formulas => Set<Formula>();
     public DbSet<Solid> Solids => Set<Solid>();
     public DbSet<StockItem> Stock => Set<StockItem>();
@@ -775,6 +804,7 @@ public record MedPlanPut(string? Name, string? Dose, string? Times, int? Interva
     DateTime? Start, int? DurationDays, bool? Active, string? Notes);
 public record UsersPutLocked(int? LockedMinutes);
 public record MetaFeedbackIn(int KidId, string Verdict, string Slot, double TH, double TAvgH, int Poops4);
+public record HungerFeedbackIn(int KidId, string Verdict); // v15.08 (R19): калибровка b модели голода
 public record ClientLogIn(int KidId, string Level, string Message, string? Stack, string BuiltAt, string? UserAgent); // v14.69
 public record ClientLogBatch(List<ClientLogIn> Items); // v14.69: пакет до 20 записей
 public record IllnessIn(int KidId, DateTime Date, string Type, string Symptoms, bool WithDoctor,
@@ -992,6 +1022,13 @@ public static class DbConfig
             ? QuerySslMode(uri) is string q && q.Length > 0 ? q
                 : (Environment.GetEnvironmentVariable("DB_SSL_MODE") ?? "Require")
             : sslMode;
+        // v15.06 (мелочь 3, ревью-7): libpq-алиасы verify-full/verify-ca NpgSql не парсит (падение на старте)
+        mode = mode.Trim().ToLowerInvariant() switch
+        {
+            "verify-full" => "VerifyFull",
+            "verify-ca" => "VerifyCA",
+            _ => mode
+        };
         return
             $"Host={uri.Host};Port={port};Database={uri.AbsolutePath.Trim('/')};Username={user};Password={pass};SSL Mode={mode};Trust Server Certificate=true";
     }
@@ -2809,6 +2846,13 @@ public static partial class HealthAnalysis
 //   смена статуса (жёлтый → красный) отправляет немедленно, мимо кулдауна.
 // Адресация — мама+папа с доступом к ребёнку (PushService.SendAll, per-kid).
 // ============================================================
+// v15.08 (R19): ЕДИНЫЙ СТАТУС ГОЛОДА ОТ P(t) ДВИЖКА (HungerModel) — чипс и push вычисляются
+// один раз: green при P < 0.35, yellow при P < 0.75, red при P ≥ 0.75. Эскалация — страховка
+// на недообученную модель: при t > 1.33 × среднего интервала статус красный вне зависимости
+// от P (порог Classify остаётся ТОЛЬКО здесь). Если модель ещё не обучена (TotalN == 0) —
+// офлайн-fallback: статус по старой эвристике Classify (согласовано с клиентским
+// hungerInfoBase). Push-текст дополнен прогнозом «следующий ~через N» из P(t).
+// ============================================================
 namespace Yaseek.Api;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -2817,6 +2861,9 @@ public static class HungerAlert
 {
     public const int YellowRepeatMin = 120; // повтор жёлтого — не чаще раза в 2 ч
     public const int RedRepeatMin = 180;    // v14.93 (3.12, ревью-2): окно повтора красного — 3 ч (было 30 мин)
+    // v15.08 (R19): пороги P(t) — единый статус голода (чипс + push из одного вычисления).
+    public const double PYellow = 0.35;     // жёлтый при P ≥ 0.35
+    public const double PRed = 0.75;        // красный при P ≥ 0.75
     // v15.03 (R3): пороги голода — константы сервера. Клиентский hungerInfo (app.js) дублирует
     // их СОЗНАТЕЛЬНО — менять синхронно в обоих местах.
     public const double GreenBelowHours = 2.0;  // зелёный — прошло < 2 ч с последнего молочного
@@ -2826,6 +2873,13 @@ public static class HungerAlert
     /// v15.03 (R3): литералы 2/1.33 заменены константами GreenBelowHours/RedAboveRatio (без смены поведения).
     public static string Classify(double tHours, double tAvg) =>
         tHours < GreenBelowHours ? "green" : tHours > RedAboveRatio * tAvg ? "red" : "yellow";
+
+    /// v15.08 (R19): единый статус голода от P(t) — green/yellow/red. Эскалация — старый
+    /// Classify-порог (t > 1.33·среднего) форсирует красный вне зависимости от P.
+    /// Дублирующая логика порогов 2 ч / 1.33× в клиенте — ТОЛЬКО офлайн-fallback (hungerInfoBase).
+    public static string StatusOf(double p, double? tHours, double? tAvg) =>
+        tHours is double t && tAvg is double a && t > RedAboveRatio * a ? "red"
+        : p >= PRed ? "red" : p >= PYellow ? "yellow" : "green";
 
     /// Средний интервал между молочными кормлениями за 48 ч.
     /// Учитываются интервалы, ЗАКАНЧИВАЮЩИЕСЯ в дневном окне 07–21 локального времени
@@ -2901,16 +2955,30 @@ public static class HungerAlertRunner
         foreach (var kid in kids)
         {
             var milkTimes = milk.Where(x => x.KidId == kid.Id).Select(x => x.FedAtUtc).ToList();
-            if (milkTimes.Count == 0) { noData++; continue; } // нет молочных кормлений — не пушим
 
             var tz = int.TryParse(await SettingsStore.GetStr(db, "kidTz." + kid.Id),
                 System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var t) ? t : 0;
             var isNight = HungerAlert.LocalHour(now, tz) >= 21 || HungerAlert.LocalHour(now, tz) < 7;
             var slot = isNight ? "night" : "day";
 
-            var tHours = (now - milkTimes[^1]).TotalHours;
+            // v15.08 (R19): статус от P(t) движка голода — единый источник для push и чипса;
+            // не обучена (TotalN == 0) — офлайн-fallback: старая эвристика Classify.
+            var hm = await HungerModel.LoadAsync(db, kid.Id);
+            var lastMilk = milkTimes.Count > 0 ? milkTimes[^1] : (DateTime?)hm.LastMilkAt;
+            if (lastMilk == null) { noData++; continue; } // молочных кормлений не было вовсе — не пушим
+            var tHours = (now - lastMilk.Value).TotalHours;
             var tAvg = HungerAlert.AvgIntervalHours(milkTimes, now, tz);
-            var st = HungerAlert.Classify(tHours, tAvg);
+            var lastStool2 = await db.Defecations.AsNoTracking()
+                .Where(d => d.KidId == kid.Id && d.AtUtc >= now.AddHours(-2))
+                .OrderByDescending(d => d.AtUtc).Select(d => (DateTime?)d.AtUtc).FirstOrDefaultAsync();
+            var illness2 = await db.Illnesses.AsNoTracking()
+                .AnyAsync(x => x.KidId == kid.Id && !x.Resolved && x.DateUtc >= now.AddDays(-30));
+            var pr = HungerModel.Predict(hm, now, tz, HungerModel.AgeMonths(kid.BirthDate, now),
+                lastMilk, lastStool2, illness2);
+            var nextTxt = pr.NextAt is DateTime na2 && na2 > now
+                ? " · следующий ~через " + HungerAlert.Fmt((na2 - now).TotalHours) : "";
+            var st = hm.TotalN == 0 ? HungerAlert.Classify(tHours, tAvg)
+                                    : HungerAlert.StatusOf(pr.P, tHours, tAvg);
 
             var stateKey = "hungerState." + kid.Id;
             string? prevSt = null; DateTime? prevAt = null;
@@ -2952,7 +3020,7 @@ public static class HungerAlertRunner
                 continue;
             }
 
-            var body = "Прошло " + HungerAlert.Fmt(tHours) + " из среднего " + HungerAlert.Fmt(tAvg) + satTxt;
+            var body = "Прошло " + HungerAlert.Fmt(tHours) + " из среднего " + HungerAlert.Fmt(tAvg) + satTxt + nextTxt;
             if (st == "red")
                 await push.SendAll(db,
                     new PushMsg("🔴 Голод: пора кормить " + kid.Name + "!", body, kid.Id), null);
@@ -2964,6 +3032,180 @@ public static class HungerAlertRunner
             if (st == "red") sentR++; else sentY++;
         }
         return $"голод: жёлтый {sentY}, красный {sentR}; тишина {quiet}, кулдаун {cooldown}, сыты {ok}, без данных {noData}";
+    }
+}
+
+
+======================================================================
+### ФАЙЛ: src/Yaseek.Api/HungerModel.cs
+// ============================================================
+// HungerModel (v15.07, R18 — ревью-7 §3): вероятностный движок голода.
+// Замена «пунктов сытости» на прогноз следующего молочного кормления с распределением:
+//   μ(t) = M · E(age) · c_b(локальный сегмент) · v(объём последнего кормления), кламп [1.2, 8] ч
+//   σ — EWMA абсолютных остатков |gap − μ_then|, кламп [0.2, 1.5] ч
+//   P(голоден сейчас) = logistic((t − μ) / (σ/1.7) + b), b — калибровка кнопками (R19)
+// Обучение — ПЛОТНОЕ, из фактических кормлений: m = EWMA(gap/E(age_at_feed), α=0.05) — личный
+// множитель (растёт с возрастом автоматически); c_b — циркадные множители по сегменту ОКОНЧАНИЯ
+// кормления (ночь 0–6, утро 6–12, день 12–18, вечер 18–24) с усадкой к общему (k=6);
+// v = clamp(sqrt(spoons/avgSpoons), 0.75, 1.35) — «съел больше → следующее позже».
+// Защита от грязных данных: gap < 0.3 ч (двойная запись) и gap > 24 ч (пропущенный день) не учат;
+// gap > 1.8·μ — винзоризация r до 1.8 (забытая запись не взрывает модель).
+// Кнопки «голоден/каприз» в R18 НЕ обучают ничего — их калибровка b переносится в R19.
+// Состояние — одна строка на ребёнка (таблица HungerStates, JSON, миграция шаг 10).
+// Сервер — единственный источник правды: клиент рендерит готовый hunger-объект из /api/sync.
+// R18 — SHADOW: старая эвристика чипса/push (HungerAlert.Classify) не тронута; сравнение
+// расхождений — по clientlog/adm; переключение тактики на P(t) — R19 (после бэктеста).
+// Движок — чистая арифметика, без пакетов и сети; детерминизм; всё время — UTC, локализация tzMin.
+// ============================================================
+namespace Yaseek.Api;
+using System.Text.Json;
+
+public sealed record HungerState(
+    double M,                    // личный множитель интервалов (норма=1.0)
+    double[] Circ,               // циркадные множители: ночь/утро/день/вечер
+    int[] N,                     // счётчик кормлений по сегментам (для усадки)
+    double Sigma,                // EWMA остатков прогноза, ч
+    double AvgSpoons,            // EWMA объёма (условные ложки; ГВ — нормированное)
+    double Bias,                 // калибровочный сдвиг кнопок (R19; в R18 всегда 0)
+    DateTime? LastMilkAt,        // последний молочный корм (UTC)
+    double LastSpoons,           // объём последнего кормления (условные ложки)
+    int TotalN                   // сколько кормлений обработано
+);
+
+public sealed record HungerPrediction(
+    double P,                    // вероятность голода сейчас [0..1]
+    double Mu,                   // прогноз интервала, ч
+    double Sigma,                // ширина распределения, ч
+    DateTime? NextAt,            // ожидаемое время следующего молочного корма (UTC)
+    string Confidence            // "high" | "mid" | "learning"
+);
+
+public static class HungerModel
+{
+    static readonly double[] AgeHours = { 2.4, 3.2, 3.7, 4.4, 5.3, 6.0 }; // приор по возрасту (HealthRules-норма, середина)
+    static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
+
+    /// Возрастной приор: ожидаемый интервал по возрасту в месяцах (холодный старт без переучивания).
+    public static double Expected(double? ageMonths) => ageMonths switch
+    {
+        null => 3.7,                                  // нет даты рождения — сегмент 3–6 мес
+        < 1 => AgeHours[0], < 3 => AgeHours[1],
+        < 6 => AgeHours[2], < 9 => AgeHours[3],
+        < 12 => AgeHours[4], _ => AgeHours[5]
+    };
+
+    /// Циркадный сегмент по ЛОКАЛЬНОМУ часу (окончание кормления / текущее время прогноза).
+    public static int Bucket(DateTime local) => local.Hour switch { < 6 => 0, < 12 => 1, < 18 => 2, _ => 3 };
+
+    public static double Ewma(double old, double x, double a) => old + a * (x - old);
+    public static double Sigmoid(double x) => 1.0 / (1.0 + Math.Exp(-x));
+
+    public static HungerState Default() => new(1.0, new[] { 1.0, 1.0, 1.0, 1.0 }, new[] { 0, 0, 0, 0 },
+        0.4, 4.5, 0.0, null, 4.5, 0);
+
+    /// Объём последнего кормления в условных ложках (шкала: смесь — ложки; ГВ — нормировано;
+    /// вода не входит в модель вовсе — считается в API).
+    public static double SpoonsEff(bool isBf, int? bfSize, double spoons) =>
+        isBf ? (bfSize == 2 ? 6.0 : bfSize == 0 ? 3.2 : 4.5) : (spoons > 0 ? spoons : 4.5);
+
+    /// Прогноз в момент nowUtc. lastMilkUtc — из ЖУРНАЛА (надёжнее state при записях задним числом);
+    /// если не задан — берётся из state.
+    public static HungerPrediction Predict(HungerState s, DateTime nowUtc, int tzMin, double? ageM,
+        DateTime? lastMilkUtc, DateTime? lastStoolUtc, bool illness)
+    {
+        var last = lastMilkUtc ?? s.LastMilkAt;
+        var mu = Math.Clamp(s.M * Expected(ageM) * CircFactor(s, nowUtc.AddMinutes(tzMin))
+                 * VolumeFactor(s), 1.2, 8.0);
+        var sigma = Math.Clamp(s.Sigma * (illness ? 1.4 : 1.0), 0.2, 1.5);
+        var t = last is DateTime lm ? (nowUtc - lm).TotalHours : double.NaN;
+        double p;
+        if (double.IsNaN(t)) p = 0.0; // молочных кормов ещё не было — «сыт» (как чипс «нет данных»)
+        else p = Sigmoid((t - mu) / (sigma / 1.7) + s.Bias);
+        if (lastStoolUtc is DateTime st && (nowUtc - st).TotalHours >= 0 && (nowUtc - st).TotalHours < 2)
+            p = Math.Min(0.95, p + 0.08 * (1.0 - (nowUtc - st).TotalHours / 2.0)); // гастроколический рефлекс
+        return new(p, mu, sigma,
+            last is DateTime lm2 ? lm2.AddHours(mu) : (DateTime?)null,
+            s.TotalN >= 12 && sigma / mu < 0.3 ? "high" : s.TotalN >= 5 ? "mid" : "learning");
+    }
+
+    static double CircFactor(HungerState s, DateTime local) => s.Circ[Bucket(local)];
+    static double VolumeFactor(HungerState s) =>
+        Math.Clamp(Math.Sqrt(s.LastSpoons / Math.Max(s.AvgSpoons, 1.0)), 0.75, 1.35);
+
+    /// Обучение на факте кормления. predictedMuThen — прогноз μ, сделанный моделью ДО кормления
+    /// (Predict по fedAtUtc) — так σ калибруется по факту сегмента.
+    public static HungerState OnFeed(HungerState s, DateTime fedAtUtc, double spoonsEff,
+        double? ageM, int tzMin, double predictedMuThen)
+    {
+        if (s.LastMilkAt is DateTime prev)
+        {
+            var gap = (fedAtUtc - prev).TotalHours;
+            if (gap >= 0.3 && gap <= 24) // перекусы/двойные записи и пропущенные дни не учат
+            {
+                var exp = Expected(ageM);
+                var r = Math.Clamp(gap / Math.Max(exp, 0.5), 0.4, gap > 1.8 * predictedMuThen ? 1.8 : 2.2);
+                var m = Math.Clamp(Ewma(s.M, r, 0.05), 0.6, 1.6);
+                var b = Bucket(fedAtUtc.AddMinutes(tzMin));
+                var circ = (double[])s.Circ.Clone(); var n = (int[])s.N.Clone();
+                // нормированный интервал по сегменту (с уже обновлённым m — иерархическая усадка k=6)
+                var raw = gap / Math.Max(m * exp, 0.5);
+                circ[b] = (n[b] * Ewma(circ[b], Math.Clamp(raw, 0.4, 2.2), 0.10) + 6 * 1.0) / (n[b] + 6);
+                n[b]++;
+                var sigma = Math.Clamp(Ewma(s.Sigma, Math.Min(Math.Abs(gap - predictedMuThen), 6.0), 0.05), 0.2, 1.5);
+                return s with { M = m, Circ = circ, N = n, Sigma = sigma,
+                    AvgSpoons = Ewma(s.AvgSpoons, spoonsEff, 0.10),
+                    LastMilkAt = fedAtUtc, LastSpoons = spoonsEff, TotalN = s.TotalN + 1 };
+            }
+        }
+        return s with { LastMilkAt = fedAtUtc, LastSpoons = spoonsEff }; // без обучения (первый/грязный gap)
+    }
+
+    /// Бэктест-харнесс: реплей журнала молочных кормлений; возвращает среднюю абсолютную ошибку
+    /// прогноза интервала (ч) и число учтённых интервалов. Для реального журнала — выгрузка ExportZip.
+    public static (double Mae, int N) Backtest(List<(DateTime FedAtUtc, double SpoonsEff)> feedsUtc,
+        int tzMin, double? ageM)
+    {
+        if (feedsUtc.Count < 2) return (0, 0);
+        var s = Default();
+        double sum = 0; int n = 0;
+        for (int i = 0; i < feedsUtc.Count; i++)
+        {
+            var (fedAt, spoons) = feedsUtc[i];
+            var muThen = Predict(s, fedAt, tzMin, ageM, null, null, false).Mu;
+            if (s.LastMilkAt is DateTime prev)
+            {
+                var gap = (fedAt - prev).TotalHours;
+                if (gap >= 0.3 && gap <= 24) { sum += Math.Abs(gap - muThen); n++; }
+            }
+            s = OnFeed(s, fedAt, spoons, ageM, tzMin, muThen);
+        }
+        return n > 0 ? (sum / n, n) : (0, 0);
+    }
+
+    // ---- персистентность: одна строка на ребёнка ----
+    public static async Task<HungerState> LoadAsync(AppDb db, int kidId)
+    {
+        var row = await db.HungerStates.FindAsync(kidId);
+        if (row == null) return Default();
+        try { return JsonSerializer.Deserialize<HungerState>(row.StateJson, JsonOpts) ?? Default(); }
+        catch { return Default(); } // битый JSON — холодный старт лучше 500
+    }
+
+    public static async Task SaveAsync(AppDb db, int kidId, HungerState s)
+    {
+        var json = JsonSerializer.Serialize(s, JsonOpts);
+        var row = await db.HungerStates.FindAsync(kidId);
+        if (row == null) db.HungerStates.Add(new HungerStateRow { KidId = kidId, StateJson = json, UpdatedAtUtc = DateTime.UtcNow });
+        else { row.StateJson = json; row.UpdatedAtUtc = DateTime.UtcNow; }
+        await db.SaveChangesAsync();
+    }
+
+    /// Возраст в месяцах по строке даты рождения "yyyy-MM-dd" (null — если даты нет).
+    public static double? AgeMonths(string? birthDate, DateTime atUtc)
+    {
+        if (string.IsNullOrWhiteSpace(birthDate) || !DateTime.TryParse(birthDate, out var bd)) return null;
+        var m = (atUtc - bd).TotalDays / 30.4375;
+        return m > 0 ? m : (double?)null;
     }
 }
 
@@ -3481,7 +3723,7 @@ using Yaseek.Api;
 // (шаги выполняются по возрастанию Id только на базах с меньшей версией).
 public static class SchemaMigrations
 {
-    public const int CurrentVersion = 9; // v15.04 (ревью-6): шаг 9 — UNIQUE ClientId на остальные журнальные таблицы // v14.96 (ревью-3): шаг 8 — откат merge Stock из шага 7 // v14.91: шаг 7 — UNIQUE-гонки (склад/сон), ReactionsAtUtc, ClientId-индексы // v14.82: шаг 6
+    public const int CurrentVersion = 10; // v15.07 (R18): шаг 10 — таблица HungerStates // v15.04 (ревью-6): шаг 9 — UNIQUE ClientId на остальные журнальные таблицы // v14.96 (ревью-3): шаг 8 — откат merge Stock из шага 7 // v14.91: шаг 7 — UNIQUE-гонки (склад/сон), ReactionsAtUtc, ClientId-индексы // v14.82: шаг 6
 
     // Шаги изменений схемы. Формат: (Id, описание, действие). Id > версии базы — выполняется.
     static readonly (int Id, string Name, Func<AppDb, Task> Run)[] Steps = new (int, string, Func<AppDb, Task>)[]
@@ -3551,6 +3793,15 @@ public static class SchemaMigrations
                 await db.Database.ExecuteSqlRawAsync($@"UPDATE ""{t2}"" SET ""ClientId"" = NULL WHERE ""Id"" IN (SELECT f.""Id"" FROM ""{t2}"" f WHERE f.""ClientId"" IS NOT NULL AND EXISTS (SELECT 1 FROM ""{t2}"" f2 WHERE f2.""ClientId"" = f.""ClientId"" AND f2.""Id"" < f.""Id""))");
                 await db.Database.ExecuteSqlRawAsync($@"CREATE UNIQUE INDEX IF NOT EXISTS ""UX_{t2}_ClientId"" ON ""{t2}"" (""ClientId"") WHERE ""ClientId"" IS NOT NULL");
             }
+        }),
+        // v15.07 (R18, ревью-7 §3): состояние движка голода — одна строка на ребёнка (JSON).
+        // Модель (HungerStateRow) даёт таблицу на свежих базах через EnsureCreated; шаг 10 — для старых.
+        (10, "v15.07: таблица HungerStates (движок голода)", async db =>
+        {
+            var isPg = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DATABASE_URL"));
+            await db.Database.ExecuteSqlRawAsync(isPg
+                ? @"CREATE TABLE IF NOT EXISTS ""HungerStates"" (""KidId"" INTEGER PRIMARY KEY, ""StateJson"" TEXT NOT NULL, ""UpdatedAtUtc"" TIMESTAMP NOT NULL DEFAULT NOW())"
+                : @"CREATE TABLE IF NOT EXISTS ""HungerStates"" (""KidId"" INTEGER PRIMARY KEY, ""StateJson"" TEXT NOT NULL, ""UpdatedAtUtc"" TEXT NOT NULL DEFAULT '')");
         }),
         (8, "v14.96/97: откат merge Stock из шага 7 (DROP UNIQUE, guard-реассигнация usage/фидов, чистка невозвратных сирот)", async db =>
         {
@@ -6162,6 +6413,24 @@ app.MapPost("/api/feeds", async (AppDb db, PushService push, HttpContext ctx, Fe
                     : $"{(formula?.Name ?? "смесь")}, {feed.Spoons:0.#} ложек (~{feed.Spoons * 30:0} мл){solidTxt}", kid.Id), // v14.30: push только владельцам этого ребёнка
         exceptOwner: me.Name); // v14.92 (3.9): исключаем АКТОРА, а не «за кого записали»
 
+    // v15.07 (R18, ревью-7 §3): обучение движка голода на каждом молочном кормлении (shadow:
+    // эвристика чипса/push не тронута — переключение в R19). Вода не считается. Сбой модели
+    // не ломает запись кормления (try/catch — R18 в shadow-режиме).
+    if (!feed.IsWater)
+    {
+        try
+        {
+            var hs = await HungerModel.LoadAsync(db, dto.KidId);
+            var tzStr2 = await SettingsStore.GetStr(db, "kidTz." + dto.KidId);
+            var tzMin2 = int.TryParse(tzStr2, out var t2v) ? t2v : 0;
+            var ageM2 = HungerModel.AgeMonths(kid.BirthDate, feed.FedAtUtc);
+            var spoonsEff = HungerModel.SpoonsEff(feed.IsBf, feed.BfSize, feed.Spoons);
+            var muThen = HungerModel.Predict(hs, feed.FedAtUtc, tzMin2, ageM2, null, null, false).Mu;
+            hs = HungerModel.OnFeed(hs, feed.FedAtUtc, spoonsEff, ageM2, tzMin2, muThen);
+            await HungerModel.SaveAsync(db, dto.KidId, hs);
+        }
+        catch (Exception ex) { Console.WriteLine("HungerModel: обновление не выполнено: " + ex.Message); }
+    }
     return Results.Ok(new { id = feed.Id });
 });
 
@@ -6594,13 +6863,55 @@ app.MapGet("/api/sync", async (AppDb db, HttpContext ctx, LookupCache lookup, in
                 solid = oSolid.Select(s => new { s.Id, s.KidId, s.SolidId, s.Jars })
             };
     }
+    // v15.08 (R19): прогноз голода — ЕДИНСТВЕННЫЙ источник тактики (чипс + push).
+    // Клиент рендерит готовый объект (p/mu/sigma/nextAt/confidence/totalN/status/tHours/tAvg);
+    // необученная модель (totalN == 0) — офлайн-fallback: старая эвристика (клиент + Runner).
+    object? hungerOut = null;
+    if (canJournal)
+    {
+        try
+        {
+            var lastMilkAt = await db.Feeds.AsNoTracking()
+                .Where(x => x.KidId == kidId && !x.IsWater)
+                .OrderByDescending(x => x.FedAtUtc).Select(x => x.FedAtUtc).FirstOrDefaultAsync();
+            var lastStoolAt = await db.Defecations.AsNoTracking()
+                .Where(x => x.KidId == kidId).OrderByDescending(x => x.AtUtc).Select(x => x.AtUtc).FirstOrDefaultAsync();
+            var illnessActive = await db.Illnesses.AsNoTracking()
+                .AnyAsync(x => x.KidId == kidId && !x.Resolved && x.DateUtc >= DateTime.UtcNow.AddDays(-30));
+            var hs = await HungerModel.LoadAsync(db, kidId);
+            var tzInt = int.TryParse(tzPrev, out var tzh) ? tzh : (tz ?? 0);
+            var nowUtc = DateTime.UtcNow;
+            // v15.08 (R19): средний интервал (48 ч, дневные концы) — статус и эскалация, паритет с Runner
+            var milk48 = await db.Feeds.AsNoTracking()
+                .Where(x => x.KidId == kidId && !x.IsWater && x.FedAtUtc >= nowUtc.AddHours(-48))
+                .OrderBy(x => x.FedAtUtc).Select(x => x.FedAtUtc).ToListAsync();
+            var tAvg3 = HungerAlert.AvgIntervalHours(milk48, nowUtc, tzInt);
+            var tHours3 = lastMilkAt != default ? (double?)((nowUtc - lastMilkAt).TotalHours) : null;
+            var ageM3 = HungerModel.AgeMonths(kid.BirthDate, nowUtc);
+            var pr = HungerModel.Predict(hs, nowUtc, tzInt, ageM3,
+                lastMilkAt != default ? lastMilkAt : (DateTime?)null,
+                lastStoolAt != default ? lastStoolAt : (DateTime?)null, illnessActive);
+            hungerOut = new
+            {
+                p = Math.Round(pr.P, 3), mu = Math.Round(pr.Mu, 2), sigma = Math.Round(pr.Sigma, 2),
+                nextAt = pr.NextAt is DateTime na ? DateTime.SpecifyKind(na, DateTimeKind.Utc).ToString("o") : null,
+                confidence = pr.Confidence, totalN = hs.TotalN,
+                // v15.08 (R19): готовый статус (чипс рендерит без пересчёта) + числа для «прошло X из Y»
+                status = HungerAlert.StatusOf(pr.P, tHours3, tAvg3),
+                tHours = tHours3 is double th3 ? Math.Round(th3, 2) : (double?)null,
+                tAvg = Math.Round(tAvg3, 2)
+            };
+        }
+        catch (Exception ex) { Console.WriteLine("HungerModel: прогноз не выполнен: " + ex.Message); }
+    }
     return Results.Ok(new
     {
         feeds = feedsOut, stock = stockOut, solidstock = solidstockOut,
         defecations = defOut, sleeps = sleepsOut, diapers = diapersOut,
         tempmeds = tmOut, foodReactions = frOut, warnings, chat, chatRead,
         measures, vaccinations = vaccs, stockOrphans,
-        chatStamp, chatMaxId, chatCount // v14.34+v14.36
+        chatStamp, chatMaxId, chatCount, // v14.34+v14.36
+        hunger = hungerOut // v15.07 (R18): прогноз движка (shadow)
     });
 });
 
@@ -6688,6 +6999,9 @@ app.MapPost("/api/formulas", async (AppDb db, HttpContext ctx, LookupCache looku
     if (!Perm(me, "formulas")) return Results.Json(new { error = "Нет прав" }, statusCode: 403);
     if (dto.ScoopGrams is double sg && sg <= 0)
         return Results.BadRequest(new { error = "Масса ложки: должна быть больше нуля" }); // v15.05 (R16, ревью-6): 0/отрицательная масса ломала списание склада (perScoop фолбэчится на 4.5)
+    // v15.06 (мелочь 2, ревью-7): валидация Name как в PUT
+    if (string.IsNullOrWhiteSpace(dto.Name)) return Results.BadRequest(new { error = "Укажите название" });
+    if (dto.Name.Length > 120) return Results.BadRequest(new { error = "Слишком длинное название" });
     var f = new Formula { Name = dto.Name, Brand = dto.Brand, ScoopGrams = dto.ScoopGrams ?? 4.5, Notes = dto.Notes };
     db.Formulas.Add(f);
     await db.SaveChangesAsync();
@@ -7666,6 +7980,9 @@ app.MapPost("/api/medplans", async (AppDb db, HttpContext ctx, MedPlanIn dto) =>
     }
     else if (dto.IntervalHours <= 0)
         return Results.BadRequest(new { error = "Укажите время приёма или интервал в часах" });
+    // v15.06 (N2, ревью-7): единая с PUT логика «не оба по значению»
+    if (times.Length > 0 && dto.IntervalHours > 0)
+        return Results.BadRequest(new { error = "Укажите либо время приёма, либо интервал, но не оба" });
     var x = new MedPlan
     {
         KidId = dto.KidId, Name = dto.Name.Trim(), Dose = (dto.Dose ?? "").Trim(),
@@ -7691,10 +8008,14 @@ app.MapPut("/api/medplans/{id:int}", async (AppDb db, HttpContext ctx, int id, M
         if (dto.Name.Length > 120) return Results.BadRequest(new { error = "Слишком длинное название" });
         x.Name = dto.Name.Trim();
     }
-    // v15.05 (R17, ревью-6): «одно из двух» — как в POST: либо время приёма, либо интервал.
-    // Оба в одном PUT — непредсказуемый план; очистка Times без интервала — план без графика.
-    if (dto.Times != null && dto.IntervalHours is int)
+    // v15.06 (N2, ревью-7): валидация по ИТОГОВЫМ значениям, а не по presence — клиент (mpForm)
+    // ВСЕГДА шлёт оба поля (times непустое + intervalHours:0), presence-проверка била валидный payload.
+    var effTimes = (dto.Times ?? x.Times) ?? "";
+    var effIvl = dto.IntervalHours ?? x.IntervalHours;
+    if (effTimes.Trim().Length > 0 && effIvl > 0)
         return Results.BadRequest(new { error = "Укажите либо время приёма, либо интервал, но не оба" });
+    if (effTimes.Trim().Length == 0 && effIvl <= 0)
+        return Results.BadRequest(new { error = "Укажите время приёма или интервал в часах" });
     if (dto.Dose != null) x.Dose = dto.Dose.Trim();
     if (dto.Times != null)
     {
@@ -8098,6 +8419,16 @@ app.MapPost("/api/tempmeds", async (AppDb db, HttpContext ctx, TempMedIn dto) =>
     // (в т.ч. общая аптечка KidId=0 — лок 0). Лок по KidId склада; транзакцию даёт сам WithStockLockAsync.
     return await StockOps.WithStockLockAsync(db, stock != null && stock.KidId == 0 ? 0 : dto.KidId, async () =>
     {
+        // v15.06 (N1, ревью-7): дедуп ВНУТРИ лока ДО декремента — лок сериализует запросы одного склада,
+        // запись параллельного ретрая уже закоммичена и видна здесь. Прежний catch возвращал Ok(dedup)
+        // ПОСЛЕ декремента — WithStockLockAsync коммитил списание ретрая: склад уменьшался дважды.
+        if (!string.IsNullOrWhiteSpace(dto.ClientId))
+        {
+            var dupIn = await db.TempMeds.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.ClientId == dto.ClientId!.Trim());
+            if (dupIn != null) return Results.Ok(new TempMedDto(dupIn.Id, dupIn.KidId,
+                DateTime.SpecifyKind(dupIn.AtUtc, DateTimeKind.Utc), dupIn.TempC, dupIn.MedName, dupIn.DoseMl, dupIn.CreatedBy));
+        }
         var t = new TempMed { KidId = dto.KidId, AtUtc = at, TempC = dto.TempC, MedName = med, DoseMl = dto.DoseMl, CreatedBy = me.Name,
             ClientId = string.IsNullOrWhiteSpace(dto.ClientId) ? null : dto.ClientId.Trim() };
         db.TempMeds.Add(t);
@@ -8115,19 +8446,7 @@ app.MapPost("/api/tempmeds", async (AppDb db, HttpContext ctx, TempMedIn dto) =>
                 $"UPDATE \"MedStocks\" SET \"Qty\" = \"Qty\" - {dto.StockQty!.Value} WHERE \"Id\" = {stock.Id} AND \"Qty\" >= {dto.StockQty!.Value}");
             if (affected == 0) return Results.BadRequest(new { error = $"На складе не хватает ({stock.Qty} {stock.Unit})" });
         }
-        try // v15.04 (R6, ревью-6): дедуп-SELECT вне транзакции — параллельный ретрай того же ClientId получал 500; в catch возвращаем существующую
-        {
-            await db.SaveChangesAsync();
-        }
-        catch (DbUpdateException)
-        {
-            var dup2 = string.IsNullOrWhiteSpace(dto.ClientId) ? null
-                : await db.TempMeds.AsNoTracking().FirstOrDefaultAsync(x => x.ClientId == dto.ClientId!.Trim());
-            if (dup2 == null) throw;
-            db.Entry(t).State = EntityState.Detached;
-            return Results.Ok(new TempMedDto(dup2.Id, dup2.KidId,
-                DateTime.SpecifyKind(dup2.AtUtc, DateTimeKind.Utc), dup2.TempC, dup2.MedName, dup2.DoseMl, dup2.CreatedBy));
-        }
+        await db.SaveChangesAsync();
         return Results.Ok(new TempMedDto(t.Id, t.KidId, DateTime.SpecifyKind(t.AtUtc, DateTimeKind.Utc), t.TempC, t.MedName, t.DoseMl, t.CreatedBy));
     });
 });
@@ -8456,6 +8775,36 @@ app.MapPost("/api/metabolism/feedback", async (AppDb db, HttpContext ctx, MetaFe
     }
     await db.SaveChangesAsync();
     return Results.Ok(new { slot, k, w, b, updates = row.Updates, s = Math.Round(s, 1) });
+});
+
+// v15.08 (R19): кнопки «Да, кормим»/«Нет, каприз» — калибровка сдвига b модели голода
+// (per-kid, таблица HungerStates). Веса MetabolismWeights кнопками больше не обучаются
+// (легаси — чистка в R21). Шаг ±0.15, кламп [-3, 3]; интервалы кнопками не учатся.
+app.MapPost("/api/hunger-feedback", async (AppDb db, HttpContext ctx, HungerFeedbackIn dto) =>
+{
+    var me = Me(ctx);
+    if (!HasKid(me, dto.KidId) || !Perm(me, "feed")) return Results.Json(new { error = "Нет прав" }, statusCode: 403);
+    if (dto.Verdict is not ("hunger" or "not-hunger")) return Results.BadRequest(new { error = "Отметка: hunger или not-hunger" });
+    var hs = await HungerModel.LoadAsync(db, dto.KidId);
+    hs = hs with { Bias = Math.Clamp(hs.Bias + (dto.Verdict == "hunger" ? 0.15 : -0.15), -3.0, 3.0) };
+    await HungerModel.SaveAsync(db, dto.KidId, hs);
+    // Возврат актуального прогноза — клиент обновляет state.hunger без полного sync.
+    var kidFb = await db.Kids.AsNoTracking().FirstOrDefaultAsync(k => k.Id == dto.KidId);
+    var tzFb = int.TryParse(await SettingsStore.GetStr(db, "kidTz." + dto.KidId),
+        System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var tFb) ? tFb : 0;
+    var nowFb = DateTime.UtcNow;
+    var lastMilkFb = await db.Feeds.AsNoTracking()
+        .Where(x => x.KidId == dto.KidId && !x.IsWater)
+        .OrderByDescending(x => x.FedAtUtc).Select(x => x.FedAtUtc).FirstOrDefaultAsync();
+    var prFb = HungerModel.Predict(hs, nowFb, tzFb, HungerModel.AgeMonths(kidFb?.BirthDate, nowFb),
+        lastMilkFb != default ? lastMilkFb : (DateTime?)null, null, false);
+    return Results.Ok(new
+    {
+        bias = Math.Round(hs.Bias, 3),
+        p = Math.Round(prFb.P, 3), mu = Math.Round(prFb.Mu, 2), sigma = Math.Round(prFb.Sigma, 2),
+        nextAt = prFb.NextAt is DateTime naFb ? DateTime.SpecifyKind(naFb, DateTimeKind.Utc).ToString("o") : null,
+        confidence = prFb.Confidence, totalN = hs.TotalN
+    });
 });
 
 // ---------- v14.69: clientlog — журнал ошибок клиента ----------
@@ -9450,7 +9799,7 @@ app.MapPut("/api/users/{id:int}", async (AppDb db, PushService push, HttpContext
                     rmap[k] = rmap[k].Select(x => x == oldName ? nn : x).Distinct().ToList();
                     touched = true;
                 }
-            if (touched) cm.Reactions = EncodeReactions(rmap);
+            if (touched) { cm.Reactions = EncodeReactions(rmap); cm.ReactionsAtUtc = DateTime.UtcNow; } // v15.06 (мелочь 5, ревью-7): штамп — новое имя дойдёт на первом синке, не после пересборки
         }
         // v14.24: каскад переименования — авторство записей остаётся за новым именем,
         // иначе гость теряет право править свои старые записи (проверка CreatedBy/FedBy != me.Name).
@@ -9815,7 +10164,7 @@ public static class Rights
 // v14.67 (фундамент): partial Program — точка для WebApplicationFactory (интеграционные тесты).
 // v15.02 (R12, ревью-6): единый источник версии — /api/version, /health, /api/export и ExportZip
 // берут одну константу; «протухший» build (14.60 в export) больше невозможен.
-public static class AppBuild { public const string Current = "15.05"; } // v15.05 (R16/R17, ревью-6) // v15.04 (R6–R10, ревью-6) // v15.03 (R3/R4, ревью-6)
+public static class AppBuild { public const string Current = "15.08"; } // v15.08 (R19: чипс+push на P(t), калибровка b кнопками, офлайн-fallback) // v15.07 (R18: движок голода, ревью-7 §3) // v15.06 (N1–N4 + мелочи, ревью-7) // v15.05 (R16/R17, ревью-6) // v15.04 (R6–R10, ревью-6) // v15.03 (R3/R4, ревью-6)
 
 // v14.67 (фундамент): partial Program — точка для WebApplicationFactory (интеграционные тесты).
 public partial class Program { }
@@ -11487,7 +11836,7 @@ const state = {
   pendingVacKey: null, vaccCatTried: false, // v14.32: флаг ретрая каталога прививок
   replyTo: null, chatMenuMsg: null, stockOrphans: null, // v14.32
   illnesses: [], editingIllnessId: 0, kidsSub: "data", // v14.37: история болезней
-  medPlans: [], medStock: null, editingMedPlanId: 0, editingMedStockId: 0, stockSub: "formulas", // v14.39; v14.59 (KIMI J14): null — ленив загрузка в модалке оживает
+  medPlans: [], medStock: null, editingMedPlanId: 0, editingMedPlanActive: true, hunger: null, editingMedStockId: 0, stockSub: "formulas", // v14.39; v14.59 (KIMI J14): null — ленив загрузка в модалке оживает
   syncFailed: false, syncShown: false, // v14.33
   chatStamp: "", chatRefreshAt: 0, chatMaxId: 0, chatCount: -1, // v14.34+v14.36
   chatQ: "", // v14.76 (#21): поисковый запрос чата
@@ -11721,7 +12070,7 @@ function netFail(e) {
 // Дедуп: одинаковый сбой (level+первые 120 символов сообщения) не чаще раза в минуту.
 // Буфер до 20 записей переживает перезагрузку (localStorage «yaseek-clientlog»);
 // флеш — раз в 30 с, при online и после логина. 401 (не залогинен) — запись остаётся в буфере.
-const APP_BUILD = "15.05"; // v15.05: R16/R17 (ревью-6) // v15.04: R6–R10 (ревью-6) // v15.02: согласовано с серверной версией (AppBuild.Current) // v15.01 // v15.00 // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (ревью-4) // v14.96: согласовано с серверной версией // v14.95: согласовано с серверной версией // v14.94: согласовано с серверной версией // v14.92: согласовано с серверной версией // v14.69: версия билда для clientlog (поднимать в каждом спринте)
+const APP_BUILD = "15.08"; // v15.08: R19 — чипс/push на P(t), калибровка кнопками b, офлайн-fallback // v15.07: R18 shadow-прогноз голода (ревью-7 §3) // v15.06: N1–N4 + мелочи (ревью-7) // v15.05: R16/R17 (ревью-6) // v15.04: R6–R10 (ревью-6) // v15.02: согласовано с серверной версией (AppBuild.Current) // v15.01 // v15.00 // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (ревью-4) // v14.96: согласовано с серверной версией // v14.95: согласовано с серверной версией // v14.94: согласовано с серверной версией // v14.92: согласовано с серверной версией // v14.69: версия билда для clientlog (поднимать в каждом спринте)
 const clientLogBuf = [];
 let clientLogFlushAt = 0;
 function clientLogPush(level, message, stack) {
@@ -11961,10 +12310,11 @@ async function loadSync(opts) {
     state.defecations = r.defecations || []; state.sleeps = r.sleeps || []; state.diapers = r.diapers || [];
     state.tempmeds = r.tempmeds || []; state.foodReactions = r.foodReactions || [];
     if (r.warnings) { state.warnings = r.warnings; showWarnings(); }
+    if (r.hunger) state.hunger = r.hunger; // v15.08 (R19): статус/прогноз движка — единственный источник тактики
     if (r.chat && r.chat.length) {
       for (const m of r.chat) if (!state.chat.some(x => x.id === m.id)) state.chat.push(m);
+      const isFirstChat = (state.lastChatId || 0) === 0; // v15.06 (N3, ревью-7): снимаем ДО продвижения lastChatId — после Math.max всегда false
       state.lastChatId = Math.max(state.lastChatId || 0, ...r.chat.map(m => m.id));
-      const isFirstChat = (state.lastChatId || 0) === 0; // v15.02 (R2): первый синк отдаёт историю — unread не растёт
       const others = r.chat.filter(m => m.author !== state.owner && !m.read); // v15.02 (R2)
       if (!isFirstChat && others.length && !chatTabActive()) {
         state.unread += others.length;
@@ -12528,21 +12878,21 @@ function renderToday() {
   const activeSleep = state.journalDay === localDay(new Date())
     ? (state.sleeps || []).find(s => s.kind === "active") : null; // v14.26: «Спит сейчас» — только на «Сегодня»
   const sleepMin = sleepList.reduce((a, s) => a + Math.max(0, (new Date(s.endUtc) - new Date(s.startUtc)) / 60000), 0);
-  const slH = Math.floor(sleepMin / 60), slM = Math.round(sleepMin % 60);
+  // v15.06 (N4, ревью-7): заголовок «Сон за день» — через durStr (перенос 59.6 м → «2 ч», не «1 ч 60 м»)
   const kb = (state.kids || []).find(k => k.id === state.kidId);
   const ageM = kb && kb.birthDate ? (Date.now() - new Date(kb.birthDate + "T00:00").getTime()) / (864e5 * 30.4375) : null;
   const norm = ageM != null ? sleepNorm(ageM) : null;
   list.insertAdjacentHTML("beforeend",
     '<div class="card sub def-head" style="text-align:center">Сон за день' +
-    (sleepList.length ? " · " + (slH ? slH + " ч " : "") + slM + " м" : "") +
+    (sleepList.length ? " · " + durStr(sleepMin * 60000) : "") +
     (norm ? " · норма " + norm[0] + "–" + norm[1] + " ч" : "") + "</div>"); // v14.25: норма сна
   if (activeSleep) {
     const durNow = Math.max(0, (Date.now() - new Date(activeSleep.startUtc).getTime()) / 60000);
-    const ah = Math.floor(durNow / 60), am = Math.round(durNow % 60);
+    // v15.06 (N4, ревью-7): «Уже …» — через durStr
     list.insertAdjacentHTML("beforeend",
       '<div class="card feed-row def-row" id="sleepNowRow"><div><div class="time">😴 Спит сейчас</div><div class="sub">с ' +
       timeStr(new Date(activeSleep.startUtc)) + '</div></div><div class="grow"><div>Уже ' +
-      (ah ? ah + " ч " : "") + am + ' м</div><div class="sub">кнопка «Проснулся» завершит сон</div></div>' +
+      durStr(durNow * 60000) + '</div><div class="sub">кнопка «Проснулся» завершит сон</div></div>' +
       (perm("feed") && (isParent() || activeSleep.createdBy === state.owner)
         ? '<div class="kid-btns"><button class="edit" title="Править">✎</button></div>' : "") +
       "</div>");
@@ -13308,12 +13658,50 @@ function nextVaccText(ageM) {
 }
 // v14.65 (запрос владельца 20.11): чипс голода на «Главной» рядом с «Норма к сейчас».
 // Правила владельца: зелёный — с последнего кормления прошло МЕНЬШЕ 2 ч; красный —
-// прошло БОЛЬШЕ 33% сверх среднего интервала между кормлениями; остальное — жёлтый.
-// Средний интервал — по молочным кормлениям за 48 ч. Ночные интервалы (окончание
-// 21:00–07:00) в среднее НЕ попадают — ночь не должна завышать «среднее» (иначе днём
-// система «терпит» голод — кейс из обсуждения с ночным перерывом 5 ч).
-// Мало данных (меньше двух дневных интервалов) — средний 3 ч, как при чётком соблюдении норм.
+// v15.08 (R19): ЕДИНЫЙ СТАТУС ГОЛОДА — P(t) движка (HungerModel, поле hunger в /api/sync).
+// Клиент больше не вычисляет статус: чипс рендерит готовые status/p/mu/nextAt/tHours/tAvg.
+// hungerInfoBase — ТОЛЬКО офлайн-fallback (hunger не пришёл или модель необучена, totalN==0):
+// старые пороги 2 ч / 1.33×среднего — согласованы с серверным Classify-fallback. Ночные
+// интервалы (окончание 21:00–07:00) в среднее не попадают (v14.93); мало данных — средний 3 ч.
 function hungerInfo() {
+  const h = state.hunger;
+  if (h && (h.totalN || 0) > 0) return hungerInfoFromEngine(h);
+  return hungerInfoBase();
+}
+function hungerInfoFromEngine(h) {
+  const fmt = x => durStr(x * 3600000);
+  const now = Date.now();
+  const tH = h.tHours != null ? h.tHours : null;
+  const avgTxt = tH != null ? fmt(h.tAvg || 3) : "3 ч (норма)";
+  const hNow = new Date(now).getHours();
+  const slot = hNow >= 7 && hNow < 21 ? "day" : "night";
+  const mw = state.metabolism && state.metabolism[slot];
+  const poops4 = (state.defecations || []).filter(x => new Date(x.atUtc) >= new Date(now - 4 * 3600000)).length;
+  const out = { slot, poops4, tH, tAvgH: h.tAvg || 3 };
+  if (tH == null)
+    return Object.assign(out, { cls: "chip-ok", title: "Голод: сыт", sub: "молочных кормлений ещё не было" });
+  let cls, title;
+  if (h.status === "red") { cls = "chip-late"; title = "Голод: пора кормить!"; }
+  else if (h.status === "yellow") { cls = "chip-soon"; title = "Голод: скоро кормить"; }
+  else { cls = "chip-ok"; title = "Голод: сыт"; }
+  let sub = h.status === "red"
+    ? "прошло " + fmt(tH) + " — среднее " + avgTxt
+    : "прошло " + fmt(tH) + " из " + avgTxt;
+  if (mw) {
+    const sat = Math.max(0, Math.min(100, 100 + mw.b - mw.k * tH - mw.w * Math.min(poops4, 6)));
+    out.sat = Math.round(sat);
+    sub += " · сытость ~" + Math.round(sat) + "%";
+  }
+  if (h.nextAt) {
+    const mins = Math.round((new Date(h.nextAt).getTime() - now) / 60000);
+    if (mins > -15) {
+      const ci = h.confidence === "high" ? "точно" : h.confidence === "mid" ? "примерно" : "учусь";
+      sub += " · прогноз: " + (mins > 0 ? "через " + durStr(mins * 60000) : "сейчас") + " (" + ci + ")";
+    }
+  }
+  return Object.assign(out, { cls, title, sub });
+}
+function hungerInfoBase() {
   const now = Date.now();
   const milk = (state.feeds || []).filter(f => !f.isWater).map(f => new Date(f.fedAtUtc).getTime()).sort((a, b) => a - b);
   const win = now - 48 * 3600000;
@@ -13329,7 +13717,7 @@ function hungerInfo() {
   }
   const avgKnown = intervals.length >= 2;
   const tAvg = avgKnown ? intervals.reduce((a, x) => a + x, 0) / intervals.length : 3;
-  const fmt = h => { const m = Math.round((h - Math.floor(h)) * 60); return m ? Math.floor(h) + " ч " + m + " м" : Math.round(h) + " ч"; };
+  const fmt = h => durStr(h * 3600000); // v15.06 (N4, ревью-7): единый durStr — перенос 59.6 м
   const avgTxt = avgKnown ? fmt(tAvg) : "3 ч (норма)";
   if (!last || last < win)
     return { cls: "chip-soon", title: "Голод: нет данных", sub: "молочных кормлений за 48 ч не было" };
@@ -13527,9 +13915,9 @@ function renderHome() {
       <button id="askNotHungry" class="hbtn hb-no">Нет, каприз</button>
     </div>`;
   list.appendChild(el);
-  // v14.68: кнопки обучения метаболизма (онлайн-коррекция весов)
-  el.querySelector("#askHungry")?.addEventListener("click", () => sendMetabolismFeedback("hunger", true));
-  el.querySelector("#askNotHungry")?.addEventListener("click", () => sendMetabolismFeedback("not-hunger", false));
+  // v15.08 (R19): кнопки калибровки модели голода (сдвиг b); веса метаболизма не обучаются
+  el.querySelector("#askHungry")?.addEventListener("click", () => sendHungerFeedback("hunger", true));
+  el.querySelector("#askNotHungry")?.addEventListener("click", () => sendHungerFeedback("not-hunger", false));
   el.querySelectorAll("button.chip").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
   } catch (e) {
     // v14.40: сбой сводки не должен ронять интерфейс целиком
@@ -13806,6 +14194,7 @@ function renderMeds() {
 }
 function openMedPlanModal(p) {
   state.editingMedPlanId = p ? p.id : 0;
+  state.editingMedPlanActive = p ? p.active !== false : true; // v15.06 (N5, ревью-7): правка приостановленного плана не включает его молча
   $("#mpModalTitle").textContent = p ? "Правка плана" : "Новый план приёма";
   $("#mpName").value = p ? p.name : "";
   $("#mpDose").value = p ? (p.dose || "") : "";
@@ -13841,7 +14230,7 @@ $("#mpForm").addEventListener("submit", async e => {
     kidId: state.kidId, name: $("#mpName").value.trim(), dose: $("#mpDose").value.trim(),
     times, intervalHours: ivl,
     start: new Date($("#mpStart").value).toISOString(),
-    durationDays: +$("#mpDays").value || 0, active: true,
+    durationDays: +$("#mpDays").value || 0, active: state.editingMedPlanActive ?? true, // v15.06 (N5, ревью-7)
     notes: $("#mpNotes").value.trim() || null
   });
   try {
@@ -14446,22 +14835,26 @@ async function loadMetabolism(force) {
   catch { if (force) toast("Веса модели не загрузились"); }
 }
 
-// v14.68: «кнопка обучения» — отметка «голоден»/«каприз» корректирует веса онлайн
-async function sendMetabolismFeedback(verdict, openFeed) {
-  const hi = hungerInfo();
-  if (hi.slot == null) return;
-  const body = JSON.stringify({
-    kidId: state.kidId, verdict, slot: hi.slot,
-    tH: +hi.tH.toFixed(2), tAvgH: +hi.tAvgH.toFixed(2), poops4: hi.poops4
-  });
+// v15.08 (R19): «кнопка обучения» — отметка «голоден»/«каприз» калибрует сдвиг b модели
+// голода (per-kid, HungerStates). Ответ содержит обновлённый прогноз — state.hunger патчится
+// без полного sync. Старый эндпоинт /api/metabolism/feedback кнопками больше не вызывается.
+async function sendHungerFeedback(verdict, openFeed) {
+  const body = JSON.stringify({ kidId: state.kidId, verdict });
   try {
-    const m = await api("/api/metabolism/feedback", { method: "POST", body });
-    if (state.metabolism) state.metabolism[slotKey(m)] = m; // PATCH кэша новым набором (v14.96: guard — GET весов мог упасть)
-    toast(verdict === "hunger" ? "Отметил: голоден — модель уточнена" : "Отметил: каприз — модель уточнена");
+    const r = await api("/api/hunger-feedback", { method: "POST", body });
+    if (state.hunger) {
+      state.hunger.bias = r.bias;
+      if (r.p != null) state.hunger.p = r.p;
+      if (r.mu != null) state.hunger.mu = r.mu;
+      if (r.sigma != null) state.hunger.sigma = r.sigma;
+      if (r.nextAt != null) state.hunger.nextAt = r.nextAt;
+      if (r.confidence != null) state.hunger.confidence = r.confidence;
+    }
+    toast(verdict === "hunger" ? "Отметил: голоден — калибровка уточнена" : "Отметил: каприз — калибровка уточнена");
     updateHungerChip();
   } catch (er) {
     if (netFail(er)) {
-      queueOffline("POST", "/api/metabolism/feedback", body);
+      queueOffline("POST", "/api/hunger-feedback", body);
       toast("Сеть недоступна — отметка уйдёт при подключении");
     } else toast("Ошибка: " + er.message);
   }
@@ -17721,7 +18114,7 @@ if (!state.token) {
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Yaseek">
-<link rel="stylesheet" href="/styles.css?v=15.05">
+<link rel="stylesheet" href="/styles.css?v=15.08">
 </head>
 <body>
 
@@ -19444,7 +19837,7 @@ body.age-kid #tab-stats #solidReactions { display: none !important; }
 // Service worker: офлайн-кэш + приём push-уведомлений
 // Стратегия: сеть-в-приоритете. При живом интернете интерфейс ВСЕГДА берётся с сервера
 // (обновления подхватываются сами при обычной перезагрузке), кэш используется только офлайн.
-const CACHE = 'yaseek-v121'; // v15.02 // v15.01 // v15.00 // v14.99 // v14.98 // v14.97 // v14.96
+const CACHE = 'yaseek-v124'; // v15.08 // v15.07 // v15.06 // v15.02 // v15.01 // v15.00 // v14.99 // v14.98 // v14.97 // v14.96
 const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest',
                '/icon-192.png', '/icon-512.png', '/bg-light.svg', '/bg-dark.svg',
                '/vendor/chart.umd.min.js'];
@@ -19615,6 +20008,17 @@ public class AppDbTests
             Assert.Contains("SSL Mode=Prefer", s);
         }
         finally { Environment.SetEnvironmentVariable("DB_SSL_MODE", before); }
+    }
+
+    // v15.06 (мелочь 3, ревью-7): libpq-алиасы sslmode маппятся на NpgSql-имена
+    [Theory]
+    [InlineData("sslmode=verify-full", "SSL Mode=VerifyFull")]
+    [InlineData("sslmode=verify-ca", "SSL Mode=VerifyCA")]
+    [InlineData("sslmode=REQUIRE", "SSL Mode=REQUIRE")]
+    public void NormalizePostgresUrl_libpq_verify_alias(string query, string expected)
+    {
+        var s = DbConfig.NormalizePostgresUrl("postgres://u:p@h/yaseek?" + query);
+        Assert.Contains(expected, s);
     }
 
     // v15.05 (R17, ревью-6): штамп бэкапа с секундами — два снимка в одну минуту не перезаписывают друг друга
@@ -20070,6 +20474,24 @@ public class HungerAlertTests
     }
 
     [Fact]
+    public void StatusOf_P_Thresholds_And_Escalation() // v15.08 (R19): статус от P(t), эскалация порогом Classify
+    {
+        Assert.Equal("green", HungerAlert.StatusOf(0.10, 1.5, 3.0));
+        Assert.Equal("green", HungerAlert.StatusOf(0.34, 2.5, 3.0));   // граница снизу
+        Assert.Equal("yellow", HungerAlert.StatusOf(0.35, 2.5, 3.0));  // порог жёлтого
+        Assert.Equal("yellow", HungerAlert.StatusOf(0.74, 2.5, 3.0));
+        Assert.Equal("red", HungerAlert.StatusOf(0.75, 2.5, 3.0));     // порог красного
+        Assert.Equal("red", HungerAlert.StatusOf(0.90, 2.5, 3.0));
+        // эскалация: P низкая, но t > 1.33·среднего — красный вне зависимости от P
+        Assert.Equal("red", HungerAlert.StatusOf(0.10, 4.5, 3.0));
+        Assert.Equal("red", HungerAlert.StatusOf(0.10, 4.0, 3.0));     // ровно 1.33× — красный
+        Assert.Equal("yellow", HungerAlert.StatusOf(0.40, 3.99, 3.0)); // ниже эскалации — от P
+        // без t/tAvg — только P
+        Assert.Equal("yellow", HungerAlert.StatusOf(0.5, null, null));
+        Assert.Equal("green", HungerAlert.StatusOf(0.1, null, null));
+    }
+
+    [Fact]
     public void Fmt_Rounds_With_Carry() // v15.02 (R15): 59.6 мин → перенос («2 ч», не «1 ч 60 м»)
     {
         Assert.Equal("2 ч", HungerAlert.Fmt(1.9933));
@@ -20228,6 +20650,32 @@ public class IntegrationTests : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.OK, (await c.GetAsync("/health")).StatusCode);
         var v = await Json(await c.GetAsync("/api/version"));
         Assert.Equal(AppBuild.Current, v.GetProperty("build").GetString()); // v15.02 (R12): сравнение с константой — «протухание» невозможно // v15.01 // v15.00 // v14.99 (prod-fix) // v14.98 (hotfix) // v14.97 (rev4) // v14.96 (rev3) // v14.95 (y229) // v14.94 (y228b)
+    }
+
+    // v15.08 (R19): кнопки калибровки b модели голода; sync отдаёт готовый статус/числа.
+    [Fact]
+    public async Task Hunger_feedback_updates_bias_and_sync_carries_status()
+    {
+        var c = C();
+        var kid = KidId(await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/bootstrap"))));
+        var r1 = await Json(await c.SendAsync(Req(HttpMethod.Post, "/api/hunger-feedback",
+            JsonSerializer.Serialize(new { kidId = kid, verdict = "hunger" }))));
+        Assert.Equal(0.15, r1.GetProperty("bias").GetDouble(), 3);
+        var r2 = await Json(await c.SendAsync(Req(HttpMethod.Post, "/api/hunger-feedback",
+            JsonSerializer.Serialize(new { kidId = kid, verdict = "not-hunger" }))));
+        Assert.Equal(0.0, r2.GetProperty("bias").GetDouble(), 3); // +0.15 − 0.15 = 0
+        Assert.True(r1.GetProperty("p").ValueKind == JsonValueKind.Number);
+        // кнопки НЕ учат интервалы — totalN не растёт
+        Assert.Equal(0, r2.GetProperty("totalN").GetInt32());
+        // инвалид-вердикт — 400
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Post, "/api/hunger-feedback",
+            JsonSerializer.Serialize(new { kidId = kid, verdict = "spite" })))).StatusCode);
+        // sync несёт готовый статус и числа (необученная модель — totalN==0, статус от fallback-эвристики)
+        var sync = await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/sync?kidId=" + kid + "&days=1")));
+        Assert.True(sync.GetProperty("hunger").ValueKind == JsonValueKind.Object);
+        Assert.True(sync.GetProperty("hunger").TryGetProperty("status", out _));
+        Assert.True(sync.GetProperty("hunger").TryGetProperty("tAvg", out _));
+        Assert.Equal(0, sync.GetProperty("hunger").GetProperty("totalN").GetInt32());
     }
 
     [Fact]
@@ -20515,6 +20963,76 @@ public class IntegrationTests : IClassFixture<ApiFactory>
             JsonSerializer.Serialize(new { jarGrams = -3.0 })))).StatusCode);
     }
 
+    // v15.06 (N2+N5, ревью-7): PUT medplans принимает клиентский payload (оба поля, ivl=0),
+    // итоговая валидация по значениям; правка приостановленного плана не включает его молча
+    [Fact]
+    public async Task Medplan_put_client_payload_and_active()
+    {
+        var c = C();
+        var kid = KidId(await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/bootstrap"))));
+        var post = JsonSerializer.Serialize(new { kidId = kid, name = "n2-план", dose = "5 мл", times = "08:00;20:00", intervalHours = 0, start = DateTime.UtcNow.ToUniversalTime().ToString("o"), durationDays = 7, active = true, notes = "" });
+        var r = await Json(await c.SendAsync(Req(HttpMethod.Post, "/api/medplans", post)));
+        var id = r.GetProperty("id").GetInt32();
+        // как клиент mpForm: оба поля, ivl=0 → 200 (регрессия v15.05: 400)
+        var put = JsonSerializer.Serialize(new { kidId = kid, name = "n2-план", dose = "5 мл", times = "08:00;20:00", intervalHours = 0, start = DateTime.UtcNow.ToUniversalTime().ToString("o"), durationDays = 7, active = true, notes = "" });
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + id, put))).StatusCode);
+        // смена режима одним PUT: только интервал
+        var put2 = JsonSerializer.Serialize(new { intervalHours = 6, times = "" });
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + id, put2))).StatusCode);
+        // оба по значениям — 400
+        var put3 = JsonSerializer.Serialize(new { times = "08:00", intervalHours = 6 });
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + id, put3))).StatusCode);
+        // приостановленный план: клиентский PUT с active=false не включает
+        var put4 = JsonSerializer.Serialize(new { active = false });
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + id, put4))).StatusCode);
+        var put5 = JsonSerializer.Serialize(new { kidId = kid, name = "n2-план", dose = "5 мл", times = "09:00", intervalHours = 0, start = DateTime.UtcNow.ToUniversalTime().ToString("o"), durationDays = 7, active = false, notes = "" });
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + id, put5))).StatusCode);
+        var plans = await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/medplans?kidId=" + kid)));
+        var plan = plans.EnumerateArray().First(x => x.GetProperty("id").GetInt32() == id);
+        Assert.False(plan.GetProperty("active").GetBoolean());
+    }
+
+    // v15.06 (мелочь 2, ревью-7): POST /api/formulas валидирует Name как PUT
+    [Fact]
+    public async Task Formula_post_requires_name()
+    {
+        var c = C();
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Post, "/api/formulas",
+            JsonSerializer.Serialize(new { name = "", brand = "b", scoopGrams = 5.0 })))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Post, "/api/formulas",
+            JsonSerializer.Serialize(new { name = new string('x', 121), brand = "b", scoopGrams = 5.0 })))).StatusCode);
+    }
+
+    // v15.07 (R18, ревью-7 §3): sync отдаёт hunger-объект; молочные кормления обучают движок (shadow)
+    [Fact]
+    public async Task Sync_returns_hunger_and_feeds_train_it()
+    {
+        var c = C();
+        var kid = KidId(await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/bootstrap"))));
+        var f = await Json(await c.SendAsync(Req(HttpMethod.Post, "/api/formulas",
+            JsonSerializer.Serialize(new { name = "r18mix", brand = "b", scoopGrams = 5.0 }))));
+        var fid = f.GetProperty("id").GetInt32();
+        var t1 = DateTime.UtcNow.AddHours(-3.2);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Post, "/api/feeds",
+            JsonSerializer.Serialize(new { kidId = kid, fedAt = Iso(t1), formulaId = fid, spoons = 4.5, isBf = false, isWater = false })))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Post, "/api/feeds",
+            JsonSerializer.Serialize(new { kidId = kid, fedAt = Iso(DateTime.UtcNow), formulaId = fid, spoons = 4.5, isBf = false, isWater = false })))).StatusCode);
+        var sync = await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/sync?kidId=" + kid + "&days=2")));
+        var h = sync.GetProperty("hunger");
+        Assert.True(h.GetProperty("totalN").GetInt32() >= 1); // обучение прошло (второй корм учёл первый)
+        var p = h.GetProperty("p").GetDouble();
+        Assert.True(p >= 0 && p <= 1);
+        var mu = h.GetProperty("mu").GetDouble();
+        Assert.True(mu >= 1.2 && mu <= 8);
+        Assert.Equal("learning", h.GetProperty("confidence").GetString()); // мало данных
+        // вода НЕ учит модель: отдельный ребёнок — только вода → totalN=0
+        var kid2 = kid; // один kid в фабрике; проверяем воду на том же: состояние не изменится от воды
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Post, "/api/feeds",
+            JsonSerializer.Serialize(new { kidId = kid2, fedAt = Iso(DateTime.UtcNow.AddMinutes(1)), formulaId = fid, spoons = 0, isBf = false, isWater = true, feedWaterMl = 50 })))).StatusCode);
+        var sync2 = await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/sync?kidId=" + kid2 + "&days=2")));
+        Assert.Equal(h.GetProperty("totalN").GetInt32(), sync2.GetProperty("hunger").GetProperty("totalN").GetInt32());
+    }
+
     // v15.05 (R17, ревью-6): PUT /api/stock — отрицательные граммы → 400 (как в POST), без клампа
     [Fact]
     public async Task Stock_put_negative_is_rejected()
@@ -20547,9 +21065,12 @@ public class IntegrationTests : IClassFixture<ApiFactory>
         // оба сразу — 400
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + pid,
             JsonSerializer.Serialize(new { times = "08:00", intervalHours = 2 })))).StatusCode);
-        // только Times — 200
-        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + pid,
+        // v15.06 (N2, ревью-7): «только Times» при прежнем ivl=3 → ИТОГ = times + ivl → 400 (оба по значениям);
+        // переключение режима — клиентским PUT, который шлёт оба поля (times + ivl=0) → 200
+        Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + pid,
             JsonSerializer.Serialize(new { times = "08:00" })))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + pid,
+            JsonSerializer.Serialize(new { times = "08:00", intervalHours = 0 })))).StatusCode);
         // очистка Times без положительного интервала — 400
         Assert.Equal(HttpStatusCode.BadRequest, (await c.SendAsync(Req(HttpMethod.Put, "/api/medplans/" + pid,
             JsonSerializer.Serialize(new { times = "", intervalHours = 0 })))).StatusCode);
@@ -20577,76 +21098,6 @@ public class LoginGuardTests
         Assert.True(LoginGuard.Blocked("test-guard-user"));
         LoginGuard.Reset("test-guard-user");
         Assert.False(LoginGuard.Blocked("test-guard-user"));
-    }
-}
-
-
-======================================================================
-### ФАЙЛ: src/Yaseek.Tests/MedicationWarningsTests.cs
-
-
-using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
-using Yaseek.Api;
-using Xunit;
-
-namespace Yaseek.Tests;
-
-// v15.03 (R4, ревью-6): фантом «лекарство просрочено» в день старта плана — слоты Times
-// до StartUtc не должны становиться кандидатами. Вызов напрямую с явным nowUtc (детерминизм).
-public class MedicationWarningsTests
-{
-    static (AppDb Db, SqliteConnection Conn) NewDb()
-    {
-        var conn = new SqliteConnection("DataSource=:memory:");
-        conn.Open();
-        var opts = new DbContextOptionsBuilder<AppDb>().UseSqlite(conn).Options;
-        var db = new AppDb(opts);
-        db.Database.EnsureCreated();
-        return (db, conn);
-    }
-
-    [Fact]
-    public async Task Slots_Before_StartUtc_Do_Not_Warn() // день старта: 08:00 до старта — фантома нет, 20:00 ещё не наступил
-    {
-        var (db, conn) = NewDb();
-        using var _ = conn;
-        var kid = new Kid { Name = "Т", BirthDate = "2025-10-19" };
-        db.Kids.Add(kid);
-        await db.SaveChangesAsync();
-
-        // локальный старт 18:00 (tz=+180): план создан в 18:00, слоты 08:00/20:00
-        var startUtc = new DateTime(2026, 11, 22, 15, 0, 0, DateTimeKind.Utc);
-        db.MedPlans.Add(new MedPlan { KidId = kid.Id, Name = "Нурофен", Dose = "5 мл",
-            Times = "08:00;20:00", IntervalHours = 0, StartUtc = startUtc, DurationDays = 0, Active = true });
-        await db.SaveChangesAsync();
-
-        var nowUtc = new DateTime(2026, 11, 22, 15, 30, 0, DateTimeKind.Utc); // 18:30 локально
-        var warns = new List<HealthWarning>();
-        await Program.AddMedicationOverdueWarnings(db, kid.Id, 180, nowUtc, warns);
-
-        Assert.Empty(warns); // до R4: «приём в 08:00 не отмечен» — фантом
-    }
-
-    [Fact]
-    public async Task Next_Day_After_Slot_Exactly_One_Warning() // на следующий день после 20:00+1 ч — ровно одно
-    {
-        var (db, conn) = NewDb();
-        using var _ = conn;
-        var kid = new Kid { Name = "Т", BirthDate = "2025-10-19" };
-        db.Kids.Add(kid);
-        await db.SaveChangesAsync();
-
-        var startUtc = new DateTime(2026, 11, 22, 15, 0, 0, DateTimeKind.Utc); // 22-го 18:00 локально
-        db.MedPlans.Add(new MedPlan { KidId = kid.Id, Name = "Нурофен", Dose = "5 мл",
-            Times = "08:00;20:00", IntervalHours = 0, StartUtc = startUtc, DurationDays = 0, Active = true });
-        await db.SaveChangesAsync();
-
-        var nowUtc = new DateTime(2026, 11, 23, 18, 30, 0, DateTimeKind.Utc); // 23-го 21:30 локально
-        var warns = new List<HealthWarning>();
-        await Program.AddMedicationOverdueWarnings(db, kid.Id, 180, nowUtc, warns);
-
-        Assert.Single(warns); // exp = 23-го 20:00 лок. (максимум из кандидатов после старта); 22-го 08:00 — до старта, скипнут
     }
 }
 
@@ -20853,6 +21304,76 @@ public class MediaSignTests
         var tok = "b64:" + Convert.ToBase64String(Encoding.UTF8.GetBytes("papa:001324"));
         var res = await c.GetAsync($"/api/kidphoto/{kid}?token={Uri.EscapeDataString(tok)}");
         Assert.True(res.StatusCode is HttpStatusCode.OK or HttpStatusCode.NotFound); // фото может не быть — важно, что не 401
+    }
+}
+
+
+======================================================================
+### ФАЙЛ: src/Yaseek.Tests/MedicationWarningsTests.cs
+
+
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Yaseek.Api;
+using Xunit;
+
+namespace Yaseek.Tests;
+
+// v15.03 (R4, ревью-6): фантом «лекарство просрочено» в день старта плана — слоты Times
+// до StartUtc не должны становиться кандидатами. Вызов напрямую с явным nowUtc (детерминизм).
+public class MedicationWarningsTests
+{
+    static (AppDb Db, SqliteConnection Conn) NewDb()
+    {
+        var conn = new SqliteConnection("DataSource=:memory:");
+        conn.Open();
+        var opts = new DbContextOptionsBuilder<AppDb>().UseSqlite(conn).Options;
+        var db = new AppDb(opts);
+        db.Database.EnsureCreated();
+        return (db, conn);
+    }
+
+    [Fact]
+    public async Task Slots_Before_StartUtc_Do_Not_Warn() // день старта: 08:00 до старта — фантома нет, 20:00 ещё не наступил
+    {
+        var (db, conn) = NewDb();
+        using var _ = conn;
+        var kid = new Kid { Name = "Т", BirthDate = "2025-10-19" };
+        db.Kids.Add(kid);
+        await db.SaveChangesAsync();
+
+        // локальный старт 18:00 (tz=+180): план создан в 18:00, слоты 08:00/20:00
+        var startUtc = new DateTime(2026, 11, 22, 15, 0, 0, DateTimeKind.Utc);
+        db.MedPlans.Add(new MedPlan { KidId = kid.Id, Name = "Нурофен", Dose = "5 мл",
+            Times = "08:00;20:00", IntervalHours = 0, StartUtc = startUtc, DurationDays = 0, Active = true });
+        await db.SaveChangesAsync();
+
+        var nowUtc = new DateTime(2026, 11, 22, 15, 30, 0, DateTimeKind.Utc); // 18:30 локально
+        var warns = new List<HealthWarning>();
+        await Program.AddMedicationOverdueWarnings(db, kid.Id, 180, nowUtc, warns);
+
+        Assert.Empty(warns); // до R4: «приём в 08:00 не отмечен» — фантом
+    }
+
+    [Fact]
+    public async Task Next_Day_After_Slot_Exactly_One_Warning() // на следующий день после 20:00+1 ч — ровно одно
+    {
+        var (db, conn) = NewDb();
+        using var _ = conn;
+        var kid = new Kid { Name = "Т", BirthDate = "2025-10-19" };
+        db.Kids.Add(kid);
+        await db.SaveChangesAsync();
+
+        var startUtc = new DateTime(2026, 11, 22, 15, 0, 0, DateTimeKind.Utc); // 22-го 18:00 локально
+        db.MedPlans.Add(new MedPlan { KidId = kid.Id, Name = "Нурофен", Dose = "5 мл",
+            Times = "08:00;20:00", IntervalHours = 0, StartUtc = startUtc, DurationDays = 0, Active = true });
+        await db.SaveChangesAsync();
+
+        var nowUtc = new DateTime(2026, 11, 23, 18, 30, 0, DateTimeKind.Utc); // 23-го 21:30 локально
+        var warns = new List<HealthWarning>();
+        await Program.AddMedicationOverdueWarnings(db, kid.Id, 180, nowUtc, warns);
+
+        Assert.Single(warns); // exp = 23-го 20:00 лок. (максимум из кандидатов после старта); 22-го 08:00 — до старта, скипнут
     }
 }
 
@@ -21463,6 +21984,23 @@ public class SchemaMigrationsTests
         Assert.Null(reacts[1].ClientId);
     }
 
+    // v15.07 (R18, ревью-7 §3): шаг 10 — таблица HungerStates для старых баз.
+    // Сценарий: таблица дропнута, версия откатана на 9 → RunAsync восстанавливает (идемпотентность шага).
+    [Fact]
+    public async Task Migration_step10_creates_hungerstates()
+    {
+        var (db, conn) = NewDb();
+        using var _ = conn;
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads"));
+        var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = "DROP TABLE \"HungerStates\"; UPDATE \"SchemaVersion\" SET \"Version\" = 9 WHERE \"Id\" = 1";
+        await cmd.ExecuteNonQueryAsync();
+        await SchemaMigrations.RunAsync(db, false, Path.Combine(Path.GetTempPath(), "yaseek-test-uploads"));
+        Assert.Equal(SchemaMigrations.CurrentVersion, VersionOf(db));
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='HungerStates'";
+        Assert.Equal(1L, Convert.ToInt64(cmd.ExecuteScalar()));
+    }
+
     // v15.04 (R6, ревью-6): шаг 9 — UNIQUE ClientId на Defecations/Diapers/TempMeds/Measures/Illnesses.
     // Сценария старой базы: индексы сымитированы дропом, дубли вставлены свободно, версия 8 → шаг 9
     // нейтрализует дубли ДО индекса (MIN Id сохраняет) и создаёт индексы.
@@ -21977,6 +22515,30 @@ public class StockRaceTests : IClassFixture<ApiFactory>
         var r2 = await Json(await c.SendAsync(Req(HttpMethod.Post, "/api/feeds", body)));
         Assert.True(r2.GetProperty("dedup").GetBoolean()); // ретрай — dedup-ok, не 500
         Assert.Equal(id, r2.GetProperty("id").GetInt32());
+    }
+
+    // v15.06 (N1, ревью-7): ПАРАЛЛЕЛЬНЫЙ ретрай tempmeds одним ClientId — склад списывается ровно один раз.
+    // Регрессия v15.04: дедуп был вне лока, catch внутри лока возвращал Ok(dedup) ПОСЛЕ декремента —
+    // WithStockLockAsync коммитил списание ретрая (склад -2 дозы на одну запись).
+    [Fact]
+    public async Task TempMed_double_post_same_clientid_stock_deducted_once()
+    {
+        var c = C();
+        var st = await c.SendAsync(Req(HttpMethod.Post, "/api/medstock",
+            JsonSerializer.Serialize(new { kidId = 0, name = "n1-race-med", kind = "med", unit = "шт", qty = 10.0, notes = "" })));
+        st.EnsureSuccessStatusCode();
+        var stockId = (await Json(st)).GetProperty("id").GetInt32();
+        var kid = KidId(await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/bootstrap"))));
+        var body = JsonSerializer.Serialize(new { kidId = kid, at = DateTime.UtcNow.ToUniversalTime().ToString("o"), medName = "парацетамол", doseMl = 5.0, stockId = stockId, stockQty = 2.0, clientId = "n1-race-client-1" });
+        var posts = Enumerable.Range(0, 2).Select(_ => c.SendAsync(Req(HttpMethod.Post, "/api/tempmeds", body))).ToArray();
+        var responses = await Task.WhenAll(posts);
+        foreach (var r in responses) Assert.True(r.IsSuccessStatusCode, "POST /api/tempmeds провалился");
+        var b1 = await responses[0].Content.ReadFromJsonAsync<JsonElement>();
+        var b2 = await responses[1].Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(b1.GetProperty("id").GetInt32(), b2.GetProperty("id").GetInt32()); // одна запись
+        var stock = await Json(await c.SendAsync(Req(HttpMethod.Get, "/api/medstock?kidId=0")));
+        var item = stock.EnumerateArray().First(x => x.GetProperty("id").GetInt32() == stockId);
+        Assert.Equal(8.0, item.GetProperty("qty").GetDouble(), 5); // списано ровно одна доза
     }
 }
 
@@ -22559,4 +23121,3 @@ alter table public.apps            enable row level security;
 
 
 
-======================================================================
