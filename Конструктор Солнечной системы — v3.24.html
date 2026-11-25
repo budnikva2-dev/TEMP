@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Конструктор Солнечной системы v3.23 — интерактивная N-body симуляция: парниковый эффект, жизнь, луны, типы звёзд, шкала Кардашева, живое Солнце, гравитационная лепка орбит мышью, резонансы, космический навигатор с двумя кораблями, станцией «МИР-2» и режимом вопроса">
-<title>Конструктор Солнечной системы — v3.23</title>
+<meta name="description" content="Конструктор Солнечной системы v3.24 — интерактивная N-body симуляция: парниковый эффект, жизнь, луны, типы звёзд, шкала Кардашева, живое Солнце, гравитационная лепка орбит мышью, резонансы, космический навигатор с двумя кораблями, станцией «МИР-2» и режимом вопроса">
+<title>Конструктор Солнечной системы — v3.24</title>
 <style>
   :root {
     --bg: #0a0f1a; --panel: #111827; --panel-2: #1f2937; --border: #2a3548;
@@ -424,7 +424,7 @@
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="scene-canvas" data-help="canvas"></canvas>
-      <div id="watermark">В. А. Будник<br>24.11.2026 · v3.23</div>
+      <div id="watermark">В. А. Будник<br>24.11.2026 · v3.24</div>
       <div class="hud-corner" id="hud-info" data-help="hud">
         <div><b>ЛКМ</b> — выбрать · <b>drag</b> — вращать · <b>СКМ</b> — пан · <b>колесо</b> — зум</div>
         <div><b>✋ потяни планету</b> — лепка орбиты · тяни <b>жёлтую стрелку</b> — вектор скорости · резонансы <b>🔗</b> внизу</div>
@@ -435,7 +435,7 @@
         <span class="close" id="tut-close" data-help="tut-close">&times;</span>
         <h3>Конструктор Солнечной системы — Руководство</h3>
         <p>Перед вами модель планетной системы, в которой физика считается честно: гравитация между телами, парниковый эффект, вода в трёх фазах, развитие жизни по шести биохимиям, старение звёзд. Орбиты и размеры на экране сжаты, чтобы всё влезло, — но климат, столкновения и периоды обращения настоящие.</p>
-        <p>Главный принцип v3.23: систему не обязательно редактировать числами. Возьмите планету мышью и потяните — орбита, климат и льды пересчитаются под курсором. А если что-то неясно — включите режим «? Вопрос» и кликните по любой кнопке или ползунку: вместо действия вы получите объяснение, зачем он нужен.</p>
+        <p>Главный принцип v3.24: систему не обязательно редактировать числами. Возьмите планету мышью и потяните — орбита, климат и льды пересчитаются под курсором. А если что-то неясно — включите режим «? Вопрос» и кликните по любой кнопке или ползунку: вместо действия вы получите объяснение, зачем он нужен.</p>
         <details open><summary>Быстрый старт: 5 минут до первой живой планеты</summary>
           <div class="row"><span>1.</span><b>Поставьте паузу (Space) и кликните по Земле — справа откроется её редактор, слева появится HUD орбиты</b></div>
           <div class="row"><span>2.</span><b>Сначала прочитайте «Что значит каждый ползунок» ниже — 18 параметров, каждый с примером</b></div>
@@ -5487,7 +5487,22 @@ function vegFracOf(b) {
     if (b.iceFraction > 0.6) geo *= 0.3;
   }
   const mod = b.bio ? b.bio.vegMod : 1;
-  return clamp(geo * mod, 0, 1);
+  // v3.24-фикс (P2-9): средний vegD по поверхности входит в глобальную растительность —
+  // теперь посадка леса кистью поднимает ёмкость среды (bioCarryingK ест этот veg),
+  // а выжигание реально роняет потолок популяций. Кэш по geoVer: пересчёт 4608 клеток
+  // только после правки редактором.
+  let vdm = 0;
+  if (b.bio && b.bio._map) {
+    const mV = b.bio._map;
+    if (b.bio._vegDVer !== mV.geoVer) {
+      let sV = 0;
+      for (let i = 0; i < mV.vegD.length; i++) sV += mV.vegD[i];
+      b.bio._vegDMean = sV / mV.vegD.length;
+      b.bio._vegDVer = mV.geoVer;
+    }
+    vdm = b.bio._vegDMean || 0;
+  }
+  return clamp(geo * mod + vdm * 0.6, 0, 1);
 }
 // Карта поверхности для интерфейса (elev 0..1), детерминирована от id тела
 function ensureBioMap(b) {
@@ -5525,7 +5540,6 @@ function ensureBioMap(b) {
   const nE = idxE.length;
   for (let r2 = 0; r2 < nE; r2++) elev[idxE[r2]] = r2 / (nE - 1);
   // v3.23: геопримитивы — впадины (чаша + кромка), трещины (рифты), правки редактора.
-  const elev0 = elev.slice();
   const crack = new Float32Array(W * H), crater = new Float32Array(W * H), vegD = new Float32Array(W * H);
   const crG = mulberry32(seed ^ 0x6E07A);
   const nCr = 3 + (crG() * 5 | 0);
@@ -5552,22 +5566,37 @@ function ensureBioMap(b) {
       elev[ii] = clamp(elev[ii] - 0.05, 0, 1);
     }
   }
-  bio._map = { W, H, elev, elev0, crack, crater, vegD, edits: {}, geoVer: 1 };
+  // v3.24-фикс (P1-4): снимки исходного рельефа — ПОСЛЕ генерации природных кратеров
+  // и рифтов: иначе «⟲ сброс» и стёрка ✋ возвращали голое шумовое поле, безвозвратно
+  // стирая собственные кратеры и разломы планеты.
+  const elev0 = elev.slice(), crack0 = crack.slice(), crater0 = crater.slice();
+  bio._map = { W, H, elev, elev0, crack, crack0, crater, crater0, vegD, edits: {}, geoVer: 1, genSeq: 0 };
   if (bio._geoEditsPending) { const pend = bio._geoEditsPending; bio._geoEditsPending = null; applyGeoEdits(bio, pend); } // v3.23: правки из сейва
   return bio._map;
 }
 function applyGeoEdits(bio, packed) { // v3.23: восстановление правок гео-редактора из сейва
+  // формат v3.24 (P2-11): [дельта-индекс, elev*255, crack*100, crater*100, (vegD+1)*50]
   const m = bio._map; if (!m || !packed) return;
+  let prevI = 0;
   for (const it of packed) {
-    const i = it[0]; if (!(i >= 0 && i < m.W * m.H)) continue;
-    m.elev[i] = it[1]; m.crack[i] = it[2]; m.crater[i] = it[3]; m.vegD[i] = it[4];
+    prevI += it[0];
+    const i = prevI; if (!(i >= 0 && i < m.W * m.H)) continue;
+    m.elev[i] = it[1] / 255; m.crack[i] = it[2] / 100; m.crater[i] = it[3] / 100; m.vegD[i] = it[4] / 50 - 1;
     m.edits[i] = true;
   }
   m.geoVer++;
 }
-function packGeoEdits(m) { // компактный дамп: только тронутые клетки
+function packGeoEdits(m) {
+  // v3.24-фикс (P2-11): квантование + дельта-индексы — ~12 Б/клетку вместо ~29,
+  // полная перекраска карты ~60 КБ вместо 130 (base64-ссылка больше не распухает вдвое)
   const out = [];
-  for (const k in m.edits) { const i = +k; out.push([i, +m.elev[i].toFixed(3), +m.crack[i].toFixed(2), +m.crater[i].toFixed(2), +m.vegD[i].toFixed(2)]); }
+  const keysE = Object.keys(m.edits).map(Number).sort((a, b) => a - b);
+  let prevI = 0;
+  for (const i of keysE) {
+    out.push([i - prevI, Math.round(clamp(m.elev[i], 0, 1) * 255), Math.round(clamp(m.crack[i], 0, 1) * 100),
+      Math.round(clamp(m.crater[i], 0, 1) * 100), Math.round(clamp(m.vegD[i], -1, 1) * 50 + 50)]);
+    prevI = i;
+  }
   return out;
 }
 function seaLevelOf(b) {
@@ -5666,6 +5695,7 @@ function bioTick(b, h, eventsOn, fast) {
   // h — шаг в годах (≤ ~400); eventsOn — битвы/мутации/эволюция (на гигантских шагах только равновесие)
   if (h <= 0 || !b.bio || !b.bio.species.length) return;
   const bio = ensureBio(b);
+  b._geoQ = null; // v3.24-фикс (P2-10): кэш качества колоний живёт один тик
   // сглаживание T (релаксация ~30 лет): тренд для фитнеса, не кадровые осцилляции климата
   const Traw = b.T_eff + b.tempAnomaly - 273.15;
   bio._Tsm = (bio._Tsm == null) ? Traw : bio._Tsm + (Traw - bio._Tsm) * clamp(h / 30, 0.005, 0.5);
@@ -5699,7 +5729,9 @@ function bioTick(b, h, eventsOn, fast) {
     const fitRes = s.req.res > 0 ? clamp(bio.res.min / s.req.res, 0, 1) : 1;
     // v3.23: гео-фактор выживания — среднее качество клеток колоний (рельеф, вода,
     // трещины, растительность). Выжигание травы или рифт под колонией бьёт по виду.
-    const fitGeo = s.colonies.length ? clamp(s.colonies.reduce((q, c) => q + geoColonyQ(b, c), 0) / s.colonies.length, 0.5, 1.25) : 1;
+    // v3.24-фикс (P2-12): пол 0.25 — залитая магмой/выжженная колония не ограничена
+    // «минус половина» (старый пол 0.5 противоречил комментарию «реально убивают»)
+    const fitGeo = s.colonies.length ? clamp(s.colonies.reduce((q, c) => q + geoColonyQ(b, c), 0) / s.colonies.length, 0.25, 1.25) : 1;
     s._fit = { T: fitT, wat: fitWat, o2: fitO2, veg: fitVeg, res: fitRes, geo: fitGeo };
     const fitness = (fitT * 0.4 + fitWat * 0.18 + fitO2 * 0.12 + fitVeg * 0.2 + fitRes * 0.1) * fitGeo;
     const preyAvail = bioPreyAvail(s, b);
@@ -6130,8 +6162,8 @@ const TERRA_ACTIONS = [
 // «Замёрзнет/закипит» — прогноз, а не запрет: залить можно любое вещество (эксперимент),
 // климат затем честно его выкипятит или заморозит (tickWaterCycle).
 const OCEAN_SUBS = [
-  { key: 'water',   short: 'вода',   name: 'Вода (как на Земле)',                 icon: '💧', fp: 273,  bp: 373,  colA: [58, 148, 168],  colB: [10, 48, 106] },
-  { key: 'brine',   short: 'рассол', name: 'Рассол (вода + соли — замерзает ниже)', icon: '🧂', fp: 250, bp: 383,  colA: [70, 120, 160],  colB: [15, 55, 95] },
+  { key: 'water',   short: 'вода',   name: 'Вода (как на Земле)',                 icon: '💧', fp: 273,  bp: 373,  minP: P_TRIPLE_BAR, colA: [58, 148, 168],  colB: [10, 48, 106] },
+  { key: 'brine',   short: 'рассол', name: 'Рассол (вода + соли — замерзает ниже)', icon: '🧂', fp: 250, bp: 383,  minP: P_TRIPLE_BAR, colA: [70, 120, 160],  colB: [15, 55, 95] },
   { key: 'nh3',     short: 'NH₃',    name: 'Аммиачный (NH₃·H₂O)',                icon: '🧪', fp: 195,  bp: 240,  colA: [150, 115, 70],  colB: [70, 48, 28] },
   { key: 'so2',     short: 'SO₂',    name: 'Сернистый (SO₂)',                    icon: '🌋', fp: 197,  bp: 263,  colA: [165, 95, 60],   colB: [85, 42, 25] },
   { key: 'h2so4',   short: 'H₂SO₄',  name: 'Сернокислотный (H₂SO₄, как облака Венеры)', icon: '🟠', fp: 283, bp: 610, colA: [215, 145, 60], colB: [130, 72, 26] },
@@ -6143,11 +6175,17 @@ const OCEAN_SUBS = [
   { key: 'silica',  short: 'магма',  name: 'Силикатная магма',                   icon: '🌡️', fp: 1450, bp: 3100, colA: [255, 130, 30],  colB: [150, 35, 10] },
 ];
 function oceanSubOf(b) { return OCEAN_SUBS.find(s => s.key === (b.oceanSub || 'water')) || OCEAN_SUBS[0]; }
-function oceanBpEff(sub, pBar) { return sub.bp + clamp(35 * Math.log10(Math.max(pBar, 0.2)), -80, 120); }
+function oceanBpEff(sub, pBar) {
+  // v3.24-фикс (P0-1): вода — та же модель Клаузиуса–Клапейрона (tBoil), что в климате,
+  // иначе диалог обещал не то, что делает симуляция: при P=92 бар расхождение достигало
+  // 127 K и вердикты менялись на противоположные (диалог «закипит», климат держит океан).
+  if (sub.key === 'water') return tBoil(Math.max(pBar, P_TRIPLE_BAR));
+  return sub.bp + clamp(35 * Math.log10(Math.max(pBar, 0.2)), -80, 120);
+}
 function oceanStatus(b, sub) {
   const T = b.T_eff + b.tempAnomaly;
   const p = Math.max(b.atmPressure || 1, 1e-6);
-  if (sub.minP && p < sub.minP) return { ok: 0, mark: '✗', why: 'нужно P ≥ ' + sub.minP + ' атм (сейчас ' + p.toFixed(2) + ')' };
+  if (sub.minP && p < sub.minP) return { ok: 0, mark: '✗', why: 'нужно P ≥ ' + (sub.minP < 0.01 ? sub.minP.toFixed(4) : sub.minP) + ' атм (сейчас ' + (p < 0.01 ? p.toFixed(4) : p.toFixed(2)) + ' — в вакууме вода сублимирует, океан не удержится)' };
   if (T < sub.fp) return { ok: 1, mark: '⚠', why: 'замёрзнет: T=' + Math.round(T) + ' K < плавления ' + sub.fp + ' K' };
   const bpE = oceanBpEff(sub, p);
   if (T > bpE) return { ok: 0, mark: '✗', why: 'закипит: T=' + Math.round(T) + ' K > кипения ~' + Math.round(bpE) + ' K' };
@@ -6256,10 +6294,10 @@ function hqEnter(b) {
   } else if (kind && PLANET_TEX[kind]) {
     // v3.23: каменные миры — HQ-текстура из геокарты (кэш на теле + версия гео):
     // глобус = реальная поверхность, пересобирается после правок редактором.
-    const bioHq = ensureBio(b), gmHq = ensureBioMap(b);
+    const bioHq = ensureBio(b), gmHq = ensureBioMap(b), myGenHq = ++gmHq.genSeq;
     if (bioHq._globeTex && bioHq._globeVer === gmHq.geoVer) swapTex(bioHq._globeTex);
     else makeGeoGlobeTexture(b, true, (t) => {
-      if (!PlanetUI.hq || PlanetUI.hq.b !== b || !b.mesh) { t.dispose(); return; }
+      if (myGenHq !== gmHq.genSeq || !PlanetUI.hq || PlanetUI.hq.b !== b || !b.mesh) { t.dispose(); return; } // v3.24-фикс (P1-5)
       if (bioHq._globeTex) bioHq._globeTex.dispose();
       bioHq._globeTex = t; bioHq._globeVer = gmHq.geoVer;
       swapTex(t);
@@ -6375,11 +6413,15 @@ function openPlanetUI() {
   hqEnter(b); // v3.20: HQ-форма (геометрия+текстура+прожектор+спин) на время интерфейса
   document.getElementById('planet-ui').classList.add('open');
   buildSeedMenu(); puRenderSpecies(); puRenderLog(); puRenderKPI(true);
+  // v3.24-фикс (P0-3): у газовых гигантов инструменты рельефа неактивны
+  const bandedUI = isBanded(b);
+  document.querySelectorAll('#pu-geo-tools [data-geo], #pu-geo-tools [data-gs], #pu-geo-reset').forEach(x => x.disabled = bandedUI);
   puRefreshRects(); // v3.20-фикс (P1-7): кэш прямоугольников для прицела
   logEvent('🪐 Интерфейс планеты: ' + b.name);
 }
 function closePlanetUI() {
   if (!PlanetUI.open) return;
+  puModalClose(); // v3.24-фикс (P1-6): модалка не должна висеть над системным видом
   PlanetUI.open = false;
   hqExit(); // v3.20: возврат к обычной LOD-форме планеты
   document.getElementById('planet-ui').classList.remove('open');
@@ -6417,11 +6459,16 @@ function puRenderKPI(force) {
   // v3.20-фикс (P1-6): энергия — из 8 + скорость прироста, чтобы видно «ждать 5 с или 5 минут»
   // v3.22: доход энергии меряем фактически (EMA между перерисовками KPI). Старая формула
   // считала от civPowUI и на стерильных мирах врала на порядок (показывала 0.04/с при 0.001).
-  const nrgInst = (PlanetUI._nrgT && PlanetUI._nrgPrev != null && now > PlanetUI._nrgT)
-    ? Math.max(0, bio.res.nrg - PlanetUI._nrgPrev) / (now - PlanetUI._nrgT) * 1000 : 0;
-  PlanetUI._nrgRate = 0.5 * (PlanetUI._nrgRate || 0) + 0.5 * nrgInst;
+  // v3.24-фикс (P2-8): EMA прихода честная. Раньше Math.max(0, Δ) обнулял приход сразу
+  // после списания стоимости, а на потолке 8/8 дельта всегда 0 — и дефицит-модалка писала
+  // «0 ⚡/с — стоит пауза?», хотя время шло. Теперь обновляем только при реальном приросте.
+  if (PlanetUI._nrgT && PlanetUI._nrgPrev != null && now > PlanetUI._nrgT) {
+    const dNrg = bio.res.nrg - PlanetUI._nrgPrev;
+    if (dNrg >= 0 && bio.res.nrg < 7.999) PlanetUI._nrgRate = 0.7 * (PlanetUI._nrgRate || 0) + 0.3 * (dNrg / (now - PlanetUI._nrgT) * 1000);
+  }
   PlanetUI._nrgPrev = bio.res.nrg; PlanetUI._nrgT = now;
-  const nrgRate = PlanetUI._nrgRate;
+  const nrgRate = PlanetUI._nrgRate || 0; // v3.24-фикс: первый рендер ещё без EMA — был undefined → TypeError в bars
+
   const bars = [['Минералы', bio.res.min, '#b9a06b', null], ['Биомасса', bio.res.bio, '#4ade80', null],
     ['⚡ Энергия ' + bio.res.nrg.toFixed(1) + '/8', bio.res.nrg / 8, '#4fd8ff', '+' + nrgRate.toFixed(2) + '/с']];
   document.getElementById('pu-res').innerHTML = bars.map(x =>
@@ -6533,6 +6580,10 @@ function geoColonyQ(b, c) {
   // растительность; вода — шельф и глубину. Наземная колония в океане и водная на суше
   // — почти нулевое качество (осушение/подъём дна реально убивают популяции). Трещины и
   // впадины портят инфраструктуру, но дают укрытие в войнах (см. bioBattles).
+  // v3.24-фикс (P2-10): один расчёт на колонию за тик — раньше 6144 вызова/кадр
+  // (64 подшага × 6 видов × 8 колоний × 2), каждый с ensureBioMap+vegFracOf.
+  const qCache = b._geoQ || (b._geoQ = new Map());
+  if (qCache.has(c.id)) return qCache.get(c.id);
   const m = ensureBioMap(b), sea = seaLevelOf(b);
   const i = geoCellIdx(m, c);
   const e = m.elev[i], ck = m.crack[i] || 0, ca = m.crater[i] || 0;
@@ -6547,7 +6598,9 @@ function geoColonyQ(b, c) {
   if (c.hab === 'water') q = qWater;
   else if (c.hab === 'both') q = Math.max(qWater, qLand); // двусредный вид держится лучшего
   else q = qLand;
-  return clamp(q, 0.15, 1.3);
+  const qq = clamp(q, 0.15, 1.3);
+  qCache.set(c.id, qq);
+  return qq;
 }
 function bioColonyPointQ(b, hab) {
   // v3.23: деление колонии — из 60 проб выбирается ЛУЧШЕЕ место по гео-качеству,
@@ -6723,6 +6776,7 @@ window.addEventListener('resize', () => { if (PlanetUI.open) puRefreshRects(); }
 
 // ===== v3.23: ГЕО-РЕДАКТОР — рисование рельефа прямо по карте =====
 const GEO_TOOLS = { raise: '⛰ поднятие рельефа', sink: '🕳 впадина', crack: '⚡ трещина', veg: '🌿 растительность', burn: '🔥 выжигание', erase: '✋ стёрка' };
+const isBanded = (b) => { const P = PLANET_TEX[b.textureKind]; return !!(P && P.type === 'bands'); }; // v3.24-фикс (P0-3)
 PlanetUI.geoTool = 'raise'; PlanetUI.geoSize = 4;
 document.querySelectorAll('#pu-geo-tools [data-geo]').forEach(btn => btn.addEventListener('click', () => {
   PlanetUI.geoTool = btn.dataset.geo;
@@ -6740,11 +6794,14 @@ function puGeoInvalidate(b) {
   if (b.bio) b.bio._globeVer = 0; // глобус устарел
 }
 function puGeoRegenGlobe(b) {
+  if (isBanded(b)) return; // v3.24-фикс (P0-3): у полосных миров своя процедурная текстура, рельефа нет
   puGeoInvalidate(b);
   if (PlanetUI.hq && PlanetUI.hq.b === b && b.mesh) {
-    const bioG = ensureBio(b), gmG = ensureBioMap(b);
+    const bioG = ensureBio(b), gmG = ensureBioMap(b), myGen = ++gmG.genSeq;
     makeGeoGlobeTexture(b, true, (t) => {
-      if (!PlanetUI.hq || PlanetUI.hq.b !== b || !b.mesh) { t.dispose(); return; }
+      // v3.24-фикс (P1-5): токен генерации — серия быстрых штрихов запускает несколько
+      // генераций, отставшая не должна перезаписать свежую текстуру старой.
+      if (myGen !== gmG.genSeq || !PlanetUI.hq || PlanetUI.hq.b !== b || !b.mesh) { t.dispose(); return; }
       if (bioG._globeTex) bioG._globeTex.dispose();
       bioG._globeTex = t; bioG._globeVer = gmG.geoVer;
       b.mesh.material.map = t; b.mesh.material.bumpMap = t; b.mesh.material.needsUpdate = true;
@@ -6765,7 +6822,7 @@ function geoApplyAt(b, m, cx, cy, tool, rad, from) {
     else if (tool === 'sink') { m.elev[i] = clamp(m.elev[i] - 0.07 * f, 0, 1); m.crater[i] = Math.max(m.crater[i], 0.5 * f); }
     else if (tool === 'veg') m.vegD[i] = clamp(m.vegD[i] + 0.08 * f, -1, 1);
     else if (tool === 'burn') m.vegD[i] = clamp(m.vegD[i] - 0.08 * f, -1, 1);
-    else if (tool === 'erase') { m.elev[i] = m.elev0[i]; m.crack[i] = 0; m.crater[i] = 0; m.vegD[i] = 0; }
+    else if (tool === 'erase') { m.elev[i] = m.elev0[i]; m.crack[i] = m.crack0[i]; m.crater[i] = m.crater0[i]; m.vegD[i] = 0; }
   }
   if (tool === 'sink') { // кромка кратера — светлый вал на карте
     for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) {
@@ -6799,6 +6856,7 @@ let _geoPaint = null;
 const _puSurf = document.getElementById('pu-surface');
 _puSurf.addEventListener('pointerdown', (e) => {
   const b = puBody(); if (!b) return;
+  if (isBanded(b)) { navShowToast('🌀 У газового гиганта нет твёрдой поверхности — рельеф не рисуется', 2600); return; } // v3.24-фикс (P0-3)
   _puSurf.classList.add('geo-paint');
   const c0 = puSurfCell(b, e);
   _geoPaint = { last: c0, tDraw: 0 };
@@ -6831,7 +6889,7 @@ window.addEventListener('pointerup', () => {
 document.getElementById('pu-geo-reset').addEventListener('click', () => {
   const b = puBody(); if (!b) return;
   const bio = ensureBio(b), m = ensureBioMap(b);
-  m.elev.set(m.elev0); m.crack.fill(0); m.crater.fill(0); m.vegD.fill(0); m.edits = {}; m.geoVer++;
+  m.elev.set(m.elev0); m.crack.set(m.crack0); m.crater.set(m.crater0); m.vegD.fill(0); m.edits = {}; m.geoVer++;
   puGeoRegenGlobe(b);
   bioLog(b, '🗺 Гео-редактор: рельеф сброшен к исходному', 'geo');
   puRenderLog();
@@ -6918,11 +6976,12 @@ function puTerraClick(b, key) {
 function puDeficitModal(b, A) {
   const bio = ensureBio(b);
   const rate = PlanetUI._nrgRate || 0; // измеренный приход, энергии/сек реального времени
+  const satN = bio.res.nrg >= 7.999; // v3.24-фикс (P2-8): потолок — не «пауза»
   const need = A.cost - bio.res.nrg;
   const sec = rate > 1e-6 ? need / rate : null;
   puModalOpen('<h4>⚡ Недостаточно энергии</h4>'
     + '<div>Действие «' + A.icon + ' ' + A.label + '» стоит ⚡' + A.cost.toFixed(2) + ', на планете есть ⚡' + bio.res.nrg.toFixed(2) + ' (лимит 8).</div>'
-    + '<div class="m-note">Приход: солнечные коллекторы (ближе к звезде — больше) + колониальный грант; цивилизации добавляют производство. Сейчас ≈ ' + (rate > 0 ? rate.toFixed(3) + ' ⚡/с' : '0 ⚡/с — стоит пауза?')
+    + '<div class="m-note">Приход: солнечные коллекторы (ближе к звезде — больше) + колониальный грант; цивилизации добавляют производство. Сейчас ≈ ' + (satN ? 'потолок 8 — приход идёт, но запас не растёт; потратьте часть' : (rate > 0 ? rate.toFixed(3) + ' ⚡/с' : '0 ⚡/с — стоит пауза?'))
     + (sec != null ? '. До цели ≈ ' + (sec < 120 ? Math.ceil(sec) + ' с' : Math.round(sec / 60) + ' мин') + ' при текущей скорости.' : '. Ускорьте время (×100…×10⁶) или снимите паузу.') + '</div>'
     + '<div class="m-row"><button class="pu-btn" id="pm-ok">Понятно</button></div>');
   document.getElementById('pm-ok').onclick = puModalClose;
@@ -8209,9 +8268,15 @@ document.getElementById('btn-add').addEventListener('click', openAddModal);
 document.getElementById('np-cancel').addEventListener('click', closeAddModal);
 document.getElementById('modal-backdrop').addEventListener('click', (e) => { if (e.target.id === 'modal-backdrop') closeAddModal(); });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { if (PlanetUI.open) closePlanetUI(); else closeAddModal(); }
+  if (e.key === 'Escape') {
+    const pmE = document.getElementById('pu-modal');
+    if (pmE && pmE.style.display === 'flex') { puModalClose(); return; } // v3.24-фикс (P1-6): Esc закрывает модалку, не интерфейс планеты
+    if (PlanetUI.open) closePlanetUI(); else closeAddModal();
+  }
   if (e.key === 'Enter' && document.getElementById('modal-backdrop').classList.contains('open') && e.target.tagName === 'INPUT') addPlanet();
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const pmHk = document.getElementById('pu-modal');
+  if (pmHk && pmHk.style.display === 'flex') return; // v3.24-фикс (P1-7): хоткеи системы не срабатывают сквозь модалку (R сбрасывал систему, + открывал добавление поверх)
   if (e.key === ' ') { document.getElementById('btn-pause').click(); e.preventDefault(); }
   else if (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З') document.getElementById('btn-planet').click();
   else if (e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А') document.getElementById('btn-frame').click();
