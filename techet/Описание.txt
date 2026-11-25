@@ -1,0 +1,3489 @@
+════════════════════════════════════════════════════════════════════════
+ЧАСТЬ 0 — КОНТЕКСТ ПРОЕКТА (для понимания; читать перед работой)
+════════════════════════════════════════════════════════════════════════
+
+ЧТО ЭТО ЗА ПРОЕКТ
+TecHet 01 — инженерно-расчётный веб-консультант технолога. Сервер считает
+фазовые равновесия (пар–жидкость), свойства потоков и типовые расчёты
+оборудования; браузер отдаёт формы, графики и отчёты. Приложение самоходное:
+PWA-фронт выдаётся из wwwroot сервером.
+
+СТЕК И СЛОИ
+• Сервер: ASP.NET Core 8, minimal APIs (Endpoints/*), EF Core.
+  Локальный провайдер — SQLite, облачный — PostgreSQL (проект Migrations.Pg).
+• Фронт: React 19 + TypeScript + Vite (собранный бандл в wwwroot/assets).
+• Тесты: xUnit — tests/TecHet.Tests (основной пакет, ~406 тестов) и
+  tests/TecHet.Tests.Gerg (эталонные проверки против GERG-модели, прогон
+  через tools/gerg_reference_check.py).
+• Ядро расчётов: src/TecHet.Api/Services/Calc — правки этого хода только там
+  и в тестах.
+
+КАРТА КЛАССОВ (что где живёт; размеры — байты файлов)
+
+ЯДРО ФИЗИКИ (Services/Calc):
+  PengRobinson.cs        140636 — EOS Пенга–Робинсона: кубика Z, ZAndPhi,
+                         бисекция пузырька/росы (SumK), MixtureVleService
+                         (VLE-поверхности), классический и Michelsen-пути.
+                         ГЛАВНЫЙ ФАЙЛ ЭТОГО ЗАДАНИЯ.
+  MichelsenFlash.cs       25446 — стабильность: TPD, минимизация по пробным
+                         составам w, разложение двухфазное (β по RR).
+  MixingInterfaces.cs     16681 — интерфейсы миксинга: NRTL, UNIQUAC,
+                         UNIFAC; Wong–Sandler-замыкание (Λ_PR = −0.62323),
+                         вычисление γ для жидкой фазы.
+  UnifacService.cs        39283 — UNIFAC PSRK: 59 подгрупп, r_i/q_i/сегменты.
+  UniquacService.cs        5925 — UNIQUAC-обвязка (τ из ChemSep-обучающих пар).
+  NrtlService.cs           2075 — NRTL (обёртка, формулы в MixingInterfaces).
+  PenelouxShift.cs         2770 — Peneloux-коррекция объёма (константы PR:
+                         0.50033 / 0.25969 — НЕ SRK-значения 0.407/0.29441).
+  KijReference.cs          3446 — справочник парных k_ij.
+  CalcInputValidator.cs   22166 — валидация входов расчётов.
+  CalcMeta.cs              3675 — контракт версии расчёта (v36.14; НЕ менять).
+  CalcServices.cs          5746 — DI-обвязка калькуляторов.
+  ResultSentinel.cs        2786 — маркировка сомнительных результатов
+                         (уровни доверия, флаги под сомнением — потребителю UI).
+  PointsCache.cs           3405 — кэш точек VLE.
+
+ПРИКЛАДНЫЕ КАЛЬКУЛЯТОРЫ (Services/Calc):
+  ChemService (26118) — химические равновесия; PhCalc (16143) — pH;
+  HydraulicsCalc (9396); PumpCalc (12168); ExchangerCalc (6126);
+  HeatTransferCalc (11733); SeparatorCalc (17157); FurnaceService (14842);
+  FilterValveCalc (9238); CorrosionCalc (5018); MixtureCalc (11272);
+  SolubilityService (6471); SupportLoadCalc (5378); WallThicknessCalc (7522).
+
+ДАННЫЕ:
+  Data/AppDbContext.cs — EF-контекст; Data/SeedLoader.cs — загрузчик сидов;
+  Data/substances.json — база 287 веществ (Tc, Pc, ω, A, B, теплоёмкости,
+  константы Антуана и пр.); Data/chemistry.json — химия реакций.
+
+СЕРВИСЫ ПЛАТФОРМЫ (Services/*):
+  PropertyService (21440) — свойства чистых веществ; SubstanceAccess;
+  RegistryImportService (18656) / MixtureImportService — импорт справочников;
+  PdfReport (18673) — отчёты; JwtTokenService/RefreshTokenService — auth;
+  DbGuard/MediaGuard/UserPresence — служебные.
+
+ENDPOINTS (minimal API, 19 файлов): CalcEndpoints, SubstancesEndpoints,
+  SweepEndpoints (свип-графики), ProjectsEndpoints, AssetsEndpoints,
+  ChatEndpoints, DefectsEndpoints, AdminEndpoints и др.
+
+ФРОНТ (frontend/src): pages/* (Substances, Chemistry, Assets, NpzPage,
+  Furnace и т.д.), calculators/forms/* (формы калькуляторов), assistant/*
+  (офлайн-ассистент с базой знаний kb.ts), api.ts — клиент.
+
+ТЕСТЫ: tests/TecHet.Tests — нумерация по раундам (R15…R31Sprint3);
+  R17/R18 — классические эталоны (НЕ менять числа); R197Tests — WS-эталоны
+  (обновляются по заданию R31b); R27Sprint1/R29Sprint2 — предыдущие спринты.
+  TecHet.Tests.Gerg — GERG-кросс-проверки (GergTests.cs).
+
+ИНВАРИАНТЫ, НА КОТОРЫ ОПИРАЕМСЯ (не нарушать правками):
+• b_mix − a_mix/RT ≡ ΣΣ x_i x_j B_ij (Wong–Sandler); при G^E=0 и чистом
+  веществе миксинг вырождается в классический (Ws_Pure_Limit).
+• φ от корня кубики считается только от КОРНЯ (не от клампа); материальный
+  баланс фаз: Σ y_i·β + Σ x_i·(1−β) ≡ Σ z_i.
+• Гиббс–Дюгем для NRTL: x1·d lnγ1/dx1 + x2·d lnγ2/dx2 ≡ 0.
+
+ПРАВИЛА РАБОТЫ С КОДОМ (жёсткие):
+• Возврат — ПОЛНЫЙ файл класса, без диффов и «вставьте между строками».
+• Не реформатить, не переименовывать, не трогать соседний код.
+• CalcMeta.Version, csproj, NuGet — не менять.
+• Числа в тестах — только из ТЗ или факта прогона.
+
+
+ЧАСТЬ I — ЗАДАЧА R31b — TecHet 01, спринт 3, фаза 1 (Ш3), SumK-пакет + Q1/Q2 + пересверка WS-эталонов
+
+КОНТЕКСТ (читать до начала правок)
+Проект: TecHet 01 — инженерно-расчётный консультант технолога. ASP.NET Core 8, ядро — Services/Calc/.
+База: v36.19 (R29) + патчи R31a, уже применённые (присланы отдельно, применять НЕ нужно):
+  1) MixingInterfaces.cs: знаменатель Wong–Sandler приведён к оригинальной форме
+     denom = 1.0 - sumAOverBRt - geRt / LambdaPr;  (инвариант b_mix − a_mix/RT ≡ ΣΣ x_i x_j B_ij)
+  2) PengRobinson.cs: SolveEnthalpy и FullH (PH-flash) — catch(ValidationException) заменён
+     явной проверкой tK >= tc.Max() (дефект 4.1 закрыт);
+  3) Program.cs: тройная вставка if (rateLimitOn) свернута до одиночной (R30-микропатч);
+  4) tests/TecHet.Tests/R31Sprint3Tests.cs: 4 теста (Ws_Invariant_Bmix,
+     Ws_Invariant_NonEqualMixture, Ws_Pure_Limit, Enthalpy_Supercritical_HonestVapor).
+Версия контракта расчёта: v36.14 (меняется только решением владельца — не трогать).
+
+ЗАДАЧА — SumK-фикс-пакет (R30-ревью, 5 пунктов) в PengRobinson.cs:
+(1) НЕ прерывать SumK на single-корне: сейчас «if (singleL) return (NaN, false, dir)» глотает
+    кейс, когда жидкий корень в окне один — φ берутся от доступного корня, y-итерация продолжается.
+    Аборт остаётся ТОЛЬКО когда жидкой ветки нет вовсе (rootIsL=false): тогда dir=+1, ок=false.
+(2) Старт y — от Wilson-K: y0_i ∝ z_i·K_i^Wilson, K^Wilson = (Pc_i/P)·exp(5.373·(1+ω_i)·(1−Tc_i/T)).
+    Прямой старт y0=z воспроизводит тривиальный коллапс (K≡1, S≡1.0000) — запрещён.
+(3) Детектор тривиального корня: если после итераций max_i|y_i−z_i| < 1e-6 — корень тривиальный:
+    ok=false, dir по знаку S−1 (S≥1 → dir=−1, иначе dir=+1). Тривиальный y=z НЕ является равновесием.
+(4) Детектор края вилки: если |P − hi| < 1e-6·hi (бисекция упёрлась в верхнюю границу) —
+    честное «не найдено» (ValidationException с текстом «давление пузырька не найдено: …»),
+    а не число, совпавшее с hi (кейс Q2: 83133.58 = 3×27711.15 — верх вилки, НЕ корень).
+(5) Классификация корня не по Z<0.5: rootIsL определяется сравнением фугазностей/минимумом G,
+    а не эвристикой Z<0.5 (кейс Q2: на истинном корне Z_ж≈0.53 — эвристика ломается).
+
+ОЖИДАЕМЫЕ ЧИСЛА (независимый арбитр — python-реплика формул кода, прогон 25.11.2026):
+• Q1: CH4/C2H6 50/50 @200 K, k_ij=0.005, bubble: 2673.2 кПа (арбитр: 2673.15; допуск ±0.5%).
+  Прежние 2118.76 — псевдокорень (min TPD=−0.156) — НЕ эталон.
+• Контроль Q2: N2/CO2 50/50 @250 K, k_ij=−0.032: состав x_N2=0.1 → bubble 6.84 МПа
+  (арбитр: 6.84; допуск ±1%).
+• Q2 (50/50): РАСХОЖДЕНИЕ АРБИТРОВ, разрешить прогоном: R30-запись давала ≈10.04 МПа,
+  арбитр R31b с детектором тривиального корня даёт ≈16.35 МПа. Требование к коду: кейс
+  не должен выдавать 83133.58 (верх вилки) ни при каких настройках; конкретное число
+  зафиксировать в тесте по факту прогона (написать в ответе, что получилось).
+• WS-эталоны переснимаются (старые заморожены на дефектном знаменателе):
+  – вода/этанол 50/50 @343.15 (UNIQUAC τ ChemSep): было 59.484 → ожидание 72.57 кПа (±1%);
+  – вода/этанол 25.2/74.8 @343.15: было 67.204 → ожидание 75.52 кПа (±1%);
+  – вода/гексан (fallback UNIFAC): было 161.04 — пересчитать по прогону (число сообщить в ответе).
+  Обновить Assert'ы в R197Tests.cs (Ws_Uniquac_Bubble_We и связанные) с пометкой
+  «R31b: переснято после WS/SumK-фиксов; прежнее число — legacy под флагом».
+• При WS-фиксе слегка изменится и классический путь (inv». нет) — классические эталоны R17/R18
+  НЕ должны измениться: инвариант при G^E=0 вырождается точно (Ws_Pure_Limit).
+
+ТЕСТЫ (писать первыми, до правок ядра):
+• R31Sprint3bTests.cs (новый файл):
+  - Q1: bubble 2673.2 кПа ±0.5% (классика, k=0.005, solver=classic);
+  - Q2-контроль: x_N2=0.1 → 6.84 МПа ±1%;
+  - Q2-50/50: не равно 83133.58 кПа; результат — честная маркировка (root_verified=false или
+    ValidationException «не найдено») — фиксировать фактическое поведение;
+  - SumK_WilsonStart: старт y от Wilson-K не даёт тривиального S≡1.0000 на кейсе Q1 при P<2673;
+  - SumK_TrivialRejected: тривиальный корень отбрасывается (S=1 при y=z не считается решением);
+  - SumK_EdgeRefusal: кейс, где бисекция упирается в hi=3·pw → честный отказ, а не число.
+• GergTests.cs: добавить Q1 (PR 2673.2 vs GERG-корреляция ≈2638.8 кПа, расхождение ≤2%).
+• Инвариантная сеть Q3 (минимальный набор на этом шаге):
+  - B-constraint: b_mix − a_mix/RT ≡ ΣΣ x_i x_j B_ij (уже есть Ws_Invariant_Bmix — не дублировать);
+  - pure-limit (есть); Гиббс–Дюгем для NRTL на 2 компонентах: x1·d lnγ1/dx1 + x2·d lnγ2/dx2 = 0
+    (симметричная τ: производные численные, допуск 1e-6);
+  - материальный баланс flash: Σ y_i·β + Σ x_i·(1−β) ≡ Σ z_i (грубая проверка в 1e-9).
+
+ЧТО ВЕРНУТЬ В ОТВЕТЕ (строго):
+1. Полный файл src/TecHet.Api/Services/Calc/PengRobinson.cs (целиком, не дифф).
+2. Полный файл src/TecHet.Api/Services/Calc/MichelsenFlash.cs — если менялся (иначе не присылать).
+3. Полные файлы тестов: R31Sprint3bTests.cs, GergTests.cs, R197Tests.cs (обновлённые).
+4. CHANGELOG.txt НЕ трогать (обогащает ассистент).
+5. Отдельно текстом: результаты прогона «dotnet build» (0 ошибок) и «dotnet test»
+   (полный пакет: все зелёные; R31 4/4 + R31b 6/6; GERG 7/7) и фактические числа Q2-50/50
+   и вода/гексан fallback.
+
+ЗАПРЕТЫ (нарушение = переделка):
+- Не менять соседний код, не реформатить, не переименовывать поля/методы.
+- Не менять CalcMeta.Version и форматы result-словарей.
+- Не добавлять NuGet-пакеты, не менять csproj.
+- Числа в тестах — из этого ТЗ или факта прогона; не выдумывать «правильные» значения.
+- Если тест не проходит после фикса — не ослаблять Assert, а чинить код и сообщать причину.
+
+
+════════════════════════════════════════════════════════════════════════
+ЧАСТЬ II — ИСХОДНЫЕ ФАЙЛЫ (это и есть база для правок; копируй их ЦЕЛИКОМ
+в ответ, внеся изменения; порядок строк и форматирование — сохранить)
+════════════════════════════════════════════════════════════════════════
+Возвращать в ответе: PengRobinson.cs, R31Sprint3bTests.cs (новый), GergTests.cs,
+R197Tests.cs (обновлённый), и MichelsenFlash.cs ТОЛЬКО если его менял.
+MixingInterfaces.cs менять не нужно — прислан для контекста WS-формулы.
+
+
+========================================================================
+=== ФАЙЛ: src/TecHet.Api/Services/Calc/PengRobinson.cs ===
+using Microsoft.EntityFrameworkCore;
+using TecHet.Api.Data;
+using TecHet.Api.DTOs;
+using TecHet.Api.Errors;
+using TecHet.Api.Models;
+
+namespace TecHet.Api.Services.Calc;
+
+/// <summary>
+/// Пенг–Робинсон (PR EoS, 1976): парожидкостное равновесие для смесей.
+/// R17 (v31): три режима — bubble (давление пузырька), dew (давление росы; dew-T при заданном P),
+/// flash (PT-flash: доля пара и составы фаз по Рачфорду–Райсу); k_ij — параметр парного
+/// взаимодействия (один на все пары — упрощение; NRTL/UNIQUAC — R18+).
+/// Фугазности аналитические (Кардано). Плотности ρ = P·M/(Z·R·T), M в кг/моль.
+/// PH-flash намеренно НЕ реализован: нужен слой энтальпий (Cp идеального газа), иначе
+/// цифры недостоверны — этап R17.2 (см. PSR).
+/// </summary>
+public class MixtureVleService
+{
+    private readonly AppDbContext _db;
+    private readonly ILogger<MixtureVleService> _log;
+    public MixtureVleService(AppDbContext db, ILogger<MixtureVleService> log) { _db = db; _log = log; }
+
+    private const double R = 8.31446261815324;
+
+    public async Task<CalcResultDto> RunAsync(MixtureInput input, double tK, int? uid = null, bool isAdmin = false)
+    {
+        if (input.Components is null || input.Components.Count < 2)
+            throw new ValidationException("Смесь: минимум 2 компонента.");
+        if (input.Components.Count > 20)
+            throw new ValidationException("Смесь: не более 20 компонентов.");
+        foreach (var c in input.Components)
+            if (c.MolFrac is <= 0 or > 1) throw new ValidationException("Мольные доли должны быть в (0; 1].");
+        double sum = input.Components.Sum(c => c.MolFrac);
+        if (Math.Abs(sum - 1.0) > 0.01)
+            throw new ValidationException($"Сумма мольных долей должна быть 1.00 ± 0.01; сейчас {sum:F3}.");
+
+        // R28 (1.5-хвост, ревью 20.11): дубликаты SubstanceId — НЕ вырожденная смесь, а чистое
+        // вещество (GERG-эталон Pure использует два одинаковых id — легитимно, k_ii = 0). Сливаем
+        // дубликаты в один компонент с суммарной долей и предупреждаем: иначе пользователь получает
+        // расчёт с двойным вкладом одного вещества без объяснения. Сумма проверяется ДО слияния —
+        // «0.5 + 0.5 + посторонний 0.3» отклоняется по сумме, а не тихо нормируется.
+        int dupMerged = 0;
+        if (input.Components.Select(c => c.SubstanceId).GroupBy(id => id).Any(g => g.Count() > 1))
+        {
+            dupMerged = input.Components.Count - input.Components.Select(c => c.SubstanceId).Distinct().Count();
+            var merged = input.Components
+                .GroupBy(c => c.SubstanceId)
+                .Select(g => new MixtureComponentInput(g.Key, g.Sum(c => c.MolFrac)))
+                .ToList();
+            input.Components.Clear();   // R28 (1.5): record — init-only, мутируем сам список
+            input.Components.AddRange(merged);
+        }
+
+        string mode = (input.Mode ?? "bubble").Trim().ToLowerInvariant();
+        if (mode is not ("bubble" or "dew" or "flash" or "ph" or "enthalpy"))
+            throw new ValidationException("mode: bubble | dew | flash | ph | enthalpy (flash: задайте pressureKpa; ph: pressureKpa + enthalpyJPerMol — мольная Дж/моль; enthalpy: T + pressureKpa).");
+        double kij = input.Kij ?? 0.0;
+        if (kij < -0.5 || kij > 0.5)
+            throw new ValidationException("k_ij должен быть в [-0.5; 0.5] (углеводородные пары 0…0.1; полярные 0.05…0.2).");
+        if (mode == "flash" && (input.PressureKpa is null || input.PressureKpa <= 0))
+            throw new ValidationException("Для flash задайте pressureKpa (> 0).");
+        if ((mode == "ph" || mode == "enthalpy") && (input.PressureKpa is null || input.PressureKpa <= 0))
+            throw new ValidationException("Для ph/enthalpy задайте pressureKpa (> 0).");
+        if (mode == "ph" && input.EnthalpyJPerMol is null)
+            throw new ValidationException("Для ph задайте enthalpyJPerMol — мольную энтальпию смеси, Дж/моль (идеальная часть отсчитана от 298.15 K).");
+        // R22.1: flash_solver и флаги формы TPD (tpd_correct — корректная форма с ln z_i)
+        if (input.FlashSolver is { Length: > 0 } solverIn && solverIn is not ("classic" or "michelsen" or "auto"))
+            throw new ValidationException("flash_solver: classic | michelsen | auto.");
+        if (input.TpdCorrect == true && input.LegacyTpd == true)
+            throw new ValidationException("Конфликт флагов tpd_correct и legacy_tpd — выберите одну форму TPD (R22.1: корректная — с ln z_i; legacy — по умолчанию).");
+        if ((input.TpdCorrect == true || input.LegacyTpd == true) && mode != "flash")
+            throw new ValidationException("tpd_correct/legacy_tpd допустимы только при mode=flash.");
+
+        var subs = new List<Substance>();
+        var supercrit = new List<string>();
+        foreach (var c in input.Components)
+        {
+            var s = await _db.Substances.FindAsync(c.SubstanceId)
+                ?? throw new NotFoundException($"Компонент id={c.SubstanceId} не найден.");
+            SubstanceAccess.EnsureVisible(s, uid, isAdmin);   // R5-1.2: чужое приватное вещество = не найдено
+            if (s.Tc == null || s.Pc == null || s.Omega == null || s.Mw == null)
+                throw new ValidationException($"Не хватает критических констант для «{s.Name}» (нужны Tкрит, Pкрит, ω, M).");
+            // R16 (пул 1 п.10, решение владельца): компонент выше своей Tc — НЕ ошибка: PR-EoS корректно
+            // описывает смесь с одним сверхкритическим компонентом (CO2 в углеводороде при 40 °C и т.п.).
+            // Достаточное условие отсутствия двухфазности — T ≥ max(Tc) и проверяется внутри Solve.
+            if (tK >= s.Tc.Value) supercrit.Add(s.Name);
+            subs.Add(s);
+        }
+
+        var z = input.Components.Select(c => c.MolFrac).ToArray();
+        var sSum = z.Sum(); for (int i = 0; i < z.Length; i++) z[i] /= sSum;
+
+        int nC = input.Components.Count;   // R19.5: один контекст на весь Run (nC в WS/справочнике)
+
+        // R17.2: k_ij-матрица per-pair (поверх скалярного kij; скаляр — по умолчанию 0)
+        // R19.1: ручной ввод имеет приоритет; если не задан ни Kij, ни KijPairs — подстановка
+        // типовых k_ij из справочника KijReference (по формулам компонентов) + предупреждения.
+        double[,]? kijMatrix = null;
+        if (input.KijPairs is { Count: > 0 })
+        {
+            kijMatrix = new double[nC, nC];   // R19.5: nC объявлен в начале Run
+            foreach (var p in input.KijPairs)
+            {
+                if (p.I < 0 || p.J < 0 || p.I >= nC || p.J >= nC || p.I == p.J)
+                    throw new ValidationException("KijPairs: индексы 0-based, I != J, в пределах списка компонентов.");
+                if (p.Value < -0.5 || p.Value > 0.5)
+                    throw new ValidationException("KijPairs: значения k_ij в [-0.5; 0.5].");
+                if (kijMatrix[p.I, p.J] != 0.0)
+                    throw new ValidationException("KijPairs: пара указана дважды.");
+                kijMatrix[p.I, p.J] = p.Value;
+                kijMatrix[p.J, p.I] = p.Value;
+            }
+        }
+
+        // R18.4e: NRTL-активности жидкой фазы (γ-φ подход; пары по индексам компонентов)
+        // R19.4/R19.5: правило смешивания φ-φ — null|"classic"|"wong-sandler"
+        if (!string.IsNullOrEmpty(input.MixingRule) &&
+            !string.Equals(input.MixingRule, "classic", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(input.MixingRule, "wong-sandler", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("mixingRule: не задано | classic | wong-sandler.");
+
+        Func<double[], double[]>? gammaOfX = null;
+        double[,] tau = new double[nC, nC];
+        double[,] alpha = new double[nC, nC];
+        IActivityModel? uniquacModel = null;   // R19.7
+        IActivityModel? unifacModel = null;    // R19.7b (совпадает с uniquacModel при unifac)
+        bool uniquacFallbackUsed = false;      // R19.7b: uniquac без пар → γ по UNIFAC
+        double[]? uniquacR = null; double[]? uniquacQ = null; double[,]? uniquacA = null; double[,]? uniquacB = null;
+        List<string>? uniquacNames = null;
+        if (!string.IsNullOrEmpty(input.ActivityModel))
+        {
+            bool isUniquac = string.Equals(input.ActivityModel, "uniquac", StringComparison.OrdinalIgnoreCase);
+            bool isUnifac = string.Equals(input.ActivityModel, "unifac", StringComparison.OrdinalIgnoreCase);
+            if (!string.Equals(input.ActivityModel, "nrtl", StringComparison.OrdinalIgnoreCase) && !isUniquac && !isUnifac)
+                throw new ValidationException("activityModel: nrtl | uniquac | unifac | не задано (по умолчанию — идеальный PR, γ=1).");
+            if (isUniquac)
+            {
+                // R19.7: UNIQUAC — r/q (Bondi) + τ_ij (ChemSep-форма exp(A+B/T))
+                if (input.NrtlPairs is { Count: > 0 })
+                    throw new ValidationException("UNIQUAC: для activityModel=\"uniquac\" задавайте uniquacPairs (τ в форме exp(A+B/T)), а не nrtlPairs.");
+                var rq = new double[nC];
+                var qq = new double[nC];
+                var manual = new HashSet<int>();
+                if (input.UniquacRq is { Count: > 0 })
+                    foreach (var rqIn in input.UniquacRq)
+                    {
+                        if (rqIn.I < 0 || rqIn.I >= nC)
+                            throw new ValidationException("UniquacRq: индекс компонента вне диапазона (0-based).");
+                        if (!double.IsFinite(rqIn.R) || !double.IsFinite(rqIn.Q) || rqIn.R <= 0 || rqIn.Q <= 0)
+                            throw new ValidationException("UniquacRq: r/q должны быть конечными положительными числами.");
+                        if (!manual.Add(rqIn.I))
+                            throw new ValidationException("UniquacRq: компонент указан дважды.");
+                        rq[rqIn.I] = rqIn.R; qq[rqIn.I] = rqIn.Q;
+                    }
+                var namesRq = new List<string>();
+                var aU = new double[nC, nC]; var bU = new double[nC, nC];
+                bool noUniquacPairs = input.UniquacPairs is not { Count: > 0 };
+                bool anyRqGap = manual.Count < nC;   // R29 (A3): пробелы r/q — есть компоненты без UniquacRq
+                if (noUniquacPairs && anyRqGap)
+                {
+                    // R29 (A3, ревью 22:1x 19.11): fallback-элигибельность — ДО цикла r/q. Прежняя
+                    // проверка uniquacFallbackUsed внутри цикла была мертва (флаг ставился позже),
+                    // а отсутствие r/q у любого компонента давало отказ вместо fallback.
+                    // Fallback: uniquac без uniquacPairs → γ по UNIFAC (PSRK), если все компоненты
+                    // разложимы; uniquacR/Q/A/B при fallback — null (N5): фактическая модель —
+                    // UnifacActivityModel, UniquacService.Gammas не вызывается (A4: γ через GammasAt).
+                    var chemSubIdsF = new int[nC][];
+                    var chemCountsF = new int[nC][];
+                    bool allDecomp = true;
+                    for (int i2 = 0; i2 < nC; i2++)
+                    {
+                        if (UnifacService.TryDecomp(subs[i2].Name, out var g2))
+                        {
+                            int len2 = g2.Length / 2;
+                            var ids2 = new int[len2]; var cnt2 = new int[len2];
+                            for (int q2 = 0; q2 < len2; q2++) { ids2[q2] = g2[2 * q2]; cnt2[q2] = g2[2 * q2 + 1]; }
+                            chemSubIdsF[i2] = ids2; chemCountsF[i2] = cnt2;
+                        }
+                        else { allDecomp = false; break; }
+                    }
+                    if (allDecomp)
+                    {
+                        uniquacModel = new UnifacActivityModel(nC, chemSubIdsF, chemCountsF);
+                        unifacModel = uniquacModel;
+                        uniquacFallbackUsed = true;
+                    }
+                }
+                for (int i2 = 0; i2 < nC; i2++)
+                {
+                    if (manual.Contains(i2)) continue;
+                    if (uniquacFallbackUsed) continue;   // R29 (A3): r/q при fallback не заполняются (модель — UNIFAC)
+                    if (UniquacService.TryRq(subs[i2].Name, out double rV, out double qV))
+                    { rq[i2] = rV; qq[i2] = qV; }
+                    else
+                        throw new ValidationException(string.Format(
+                            "UNIQUAC: параметр r_i/q_i отсутствует для \"{0}\" — расчёт невозможен (решение владельца Б8: источник неясен → отказ; fallback на UNIFAC невозможен — нет группового разложения). Передайте uniquacRq вручную (r/q по Bondi-вкладам) или используйте activityModel=\"nrtl\".", subs[i2].Name));
+                    namesRq.Add(subs[i2].Name);
+                }
+            if (input.UniquacPairs is { Count: > 0 })
+                    foreach (var pairIn in input.UniquacPairs)
+                    {
+                        if (pairIn.I < 0 || pairIn.J < 0 || pairIn.I >= nC || pairIn.J >= nC || pairIn.I == pairIn.J)
+                            throw new ValidationException("UniquacPairs: индексы 0-based, I != J, в пределах списка компонентов.");
+                        if (!double.IsFinite(pairIn.AIj) || !double.IsFinite(pairIn.BIj) || !double.IsFinite(pairIn.AJi) || !double.IsFinite(pairIn.BJi))
+                            throw new ValidationException("UniquacPairs: A_ij/B_ij должны быть конечными числами.");
+                        if (bU[pairIn.I, pairIn.J] != 0.0 || aU[pairIn.I, pairIn.J] != 0.0)
+                            throw new ValidationException("UniquacPairs: пара указана дважды.");
+                        aU[pairIn.I, pairIn.J] = pairIn.AIj; bU[pairIn.I, pairIn.J] = pairIn.BIj;
+                        aU[pairIn.J, pairIn.I] = pairIn.AJi; bU[pairIn.J, pairIn.I] = pairIn.BJi;
+                    }
+                uniquacNames = namesRq;
+                if (!uniquacFallbackUsed)   // R29 (A3): при fallback модель UNIFAC не перезаписывается Uniquac-моделью с нулевыми A/B (класс Г17 №3 «τ=1» при честном «UNIFAC-fallback»)
+                {
+                    uniquacA = aU; uniquacB = bU; uniquacR = rq; uniquacQ = qq;
+                    uniquacModel = new UniquacActivityModel(nC, rq, qq, aU, bU);
+                }
+            }
+            else if (isUnifac)
+            {
+                // R19.7b: UNIFAC — разложения по группам; uniquacPairs/uniquacRq/nrtlPairs не применимы
+                if (input.UniquacPairs is { Count: > 0 })
+                    throw new ValidationException("UNIFAC: uniquacPairs не применимы — τ не подгоняются; используйте activityModel=\"uniquac\" с uniquacPairs или чистый unifac.");
+                if (input.NrtlPairs is { Count: > 0 })
+                    throw new ValidationException("UNIFAC: nrtlPairs не применимы — используйте activityModel=\"nrtl\".");
+                if (input.UniquacRq is { Count: > 0 })
+                    throw new ValidationException("UNIFAC: uniquacRq не применимы — r/q выводятся из групповых вкладов Bondi (PSRK-набор).");
+                var chemSubIds = new int[nC][];
+                var chemCounts = new int[nC][];
+                var unifacMissing = new List<string>();
+                for (int i2 = 0; i2 < nC; i2++)
+                {
+                    if (UnifacService.TryDecomp(subs[i2].Name, out var g2))
+                    {
+                        int len2 = g2.Length / 2;
+                        var ids2 = new int[len2]; var cnt2 = new int[len2];
+                        for (int q2 = 0; q2 < len2; q2++) { ids2[q2] = g2[2 * q2]; cnt2[q2] = g2[2 * q2 + 1]; }
+                        chemSubIds[i2] = ids2; chemCounts[i2] = cnt2;
+                    }
+                    else unifacMissing.Add(subs[i2].Name);
+                }
+                if (unifacMissing.Count > 0)
+                    throw new ValidationException(string.Format(
+                        "UNIFAC: нет группового разложения для {0} — расчёт невозможен (решение владельца Б8: источник неясен → отказ); передайте τ_ij вручную (uniquacPairs при activityModel=\"uniquac\").",
+                        string.Join(", ", unifacMissing)));
+                uniquacModel = new UnifacActivityModel(nC, chemSubIds, chemCounts);
+                unifacModel = uniquacModel;
+            }
+            else
+            for (int i2 = 0; i2 < nC; i2++)
+                for (int j2 = 0; j2 < nC; j2++)
+                    if (i2 != j2) alpha[i2, j2] = 0.3;
+            if (input.NrtlPairs is { Count: > 0 })
+                foreach (var p in input.NrtlPairs)
+                {
+                    if (p.I < 0 || p.J < 0 || p.I >= nC || p.J >= nC || p.I == p.J)
+                        throw new ValidationException("NrtlPairs: индексы 0-based, I != J, в пределах списка компонентов.");
+                    if (p.AlphaIj <= 0 || p.AlphaIj > 1)
+                        throw new ValidationException("NrtlPairs: α_ij в (0; 1].");
+                    if (!double.IsFinite(p.TauIj) || !double.IsFinite(p.TauJi))
+                        throw new ValidationException("NrtlPairs: τ_ij должны быть конечными числами.");
+                    if (tau[p.I, p.J] != 0.0)
+                        throw new ValidationException("NrtlPairs: пара указана дважды.");
+                    tau[p.I, p.J] = p.TauIj; tau[p.J, p.I] = p.TauJi;
+                    alpha[p.I, p.J] = p.AlphaIj; alpha[p.J, p.I] = p.AlphaIj;
+                }
+            // R29 (A4): все γ — через IActivityModel.GammasAt. При activityModel=unifac и при
+            // UNIQUAC-fallback модель — UnifacActivityModel, а uniquacR/Q/A/B — null; прежнее
+            // замыкание UniquacService.Gammas(..., null!) падало NRE при первом вызове gammaOfX
+            // (unifac без mixingRule — γ-φ оценочный путь). Uniquac-путь — тот же расчёт
+            // (GammasAt → UniquacService.Gammas), эталоны R19.7 сохранены.
+            gammaOfX = uniquacModel != null
+                ? xx => uniquacModel.GammasAt(xx, tK)
+                : xx => NrtlService.Gammas(nC, xx, tau, alpha);
+        }
+
+        // R19.5: подключение Wong–Sandler в расчётный контур (GE-перенос φ_i)
+        IMixingRule? mixingRule = null;
+        // R27 (A2): блок R19.1 перенесён выше конструирования правила смешивания. Раньше правило
+        // WongSandlerMixingRule захватывало lMat (нули) ДО подстановки справочных k_ij — матрица
+        // заполнялась НОВЫМ массивом, а правило держало старый; при wsMode gammaOfX=null —
+        // типовые k_ij вообще не влияли на расчёт, при этом warnings сообщали обратное.
+        // R27 (N3): предупреждение l_ij теперь формулируется от ИСТОЧНИКА k_ij (см. ниже).
+        List<string> kijRefWarns = new();
+        string kijSourceLabel = "k_ij = 0";
+        if (kijMatrix == null && input.Kij is null)
+        {
+            kijMatrix = new double[nC, nC];   // R19.5: nC объявлен в начале Run
+            var missing = new List<string>();
+            bool anyRef = false;
+            for (int i2 = 0; i2 < nC; i2++)
+                for (int j2 = i2 + 1; j2 < nC; j2++)
+                {
+                    if (KijReference.TryGet(subs[i2].Formula, subs[j2].Formula, out double kRef))
+                    {
+                        kijMatrix[i2, j2] = kRef;
+                        kijMatrix[j2, i2] = kRef;
+                        kijRefWarns.Add($"использован типовой k_ij = {kRef:0.###} для пары ({subs[i2].Formula}, {subs[j2].Formula}) из справочника {KijReference.ReferenceVersion}");
+                        anyRef = true;
+                    }
+                    else
+                    {
+                        missing.Add($"({subs[i2].Formula}, {subs[j2].Formula})");
+                    }
+                }
+            if (missing.Count > 0)
+                kijRefWarns.Add("пара не найдена в справочнике типовых k_ij, k_ij = 0 — проверьте: " + string.Join(", ", missing) +
+                    " (справочник " + KijReference.ReferenceVersion + "); для ответственных расчётов задайте k_ij вручную (KijPairs).");
+            kijSourceLabel = anyRef ? $"типовые k_ij из справочника {KijReference.ReferenceVersion} — учтены в правиле смешивания" : "k_ij = 0 (пары вне справочника v1)";
+        }
+        else if (input.Kij is double kijManual)
+        {
+            kijSourceLabel = $"ручной скаляр kij = {kijManual:0.###}";
+        }
+        else
+        {
+            kijSourceLabel = "ручная матрица KijPairs";
+        }
+
+        if (string.Equals(input.MixingRule, "wong-sandler", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrEmpty(input.ActivityModel))
+                throw new ValidationException("mixingRule wong-sandler требует GE-модель: activityModel=\"nrtl\" | \"uniquac\" (φ_i при WS несёт GE-перенос — без модели GE правило невалидно).");
+            double[,] lMat = kijMatrix;
+            if (lMat is null)
+            {
+                // скалярный k_ij (или k=0 при ручном kij=0) — матрица l_ij = k_ij (R19.4: по практике)
+                lMat = new double[nC, nC];
+                for (int i2 = 0; i2 < nC; i2++)
+                    for (int j2 = 0; j2 < nC; j2++)
+                        if (i2 != j2) lMat[i2, j2] = kij;
+            }
+            mixingRule = new WongSandlerMixingRule(
+                subs.Select(s => s.Tc!.Value).ToArray(),
+                subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                subs.Select(s => s.Omega!.Value).ToArray(),
+                lMat, kijMatrix ?? lMat,
+                uniquacModel ?? new NrtlActivityModel(nC, tau, alpha));
+            gammaOfX = null;   // R19.5: γ-хуки не применяются при φ-φ — GE входит через правило смешивания
+        }
+        Dictionary<string, object?> result;
+        List<string> warns;
+        using (MixingContext.Use(mixingRule, input.WsGeInVaporPhase ?? false))   // R19.6: флаг сравнения GE-пар (А2)
+        {
+        if (mode == "flash")
+        {
+            (result, warns) = SolveFlash(subs.Select(s => s.Name).ToArray(),
+                subs.Select(s => s.Tc!.Value).ToArray(),
+                subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                subs.Select(s => s.Omega!.Value).ToArray(),
+                subs.Select(s => s.Mw!.Value).ToArray(), z, tK, input.PressureKpa!.Value * 1000.0, kij, kijMatrix, gammaOfX,
+                input.FlashSolver ?? "auto", input.TpdCorrect == true);   // R22.1: HTTP-дефолт auto
+        }
+        else if (mode == "ph" || mode == "enthalpy")
+        {
+            // R17.2: Cp_ig(T) из точек Cp газ (SubstancePoint.CpG, Дж/(кг·К)) → мольная: CpG·Mw/1000 (PCHIP, клампинг)
+            var cpig = new Func<double, double>?[subs.Count];
+            for (int i = 0; i < subs.Count; i++)
+            {
+                var s = subs[i];
+                var ptsAll = await _db.SubstancePoints.Where(p => p.SubstanceId == s.Id).OrderBy(p => p.T).ToListAsync();
+                var cpgPts = ptsAll.Where(p => p.CpG is > 0).Select(p => (p.T, p.CpG!.Value)).ToArray();
+                if (cpgPts.Length == 0)
+                    throw new ValidationException($"PH-слой: нет точек Cp (газ) для «{s.Name}» — добавьте таблицу Cp газ или используйте другой режим.");
+                double mwi = s.Mw!.Value;
+                if (cpgPts.Length == 1)
+                    cpig[i] = t => cpgPts[0].Item2 * mwi / 1000.0;
+                else
+                {
+                    var xs = cpgPts.Select(p => p.Item1).ToArray();
+                    var ys = cpgPts.Select(p => p.Item2).ToArray();
+                    var chip = new TecHet.Api.Services.Pchip(xs, ys);
+                    double y0 = ys[0], yN = ys[^1];
+                    cpig[i] = t => (t <= xs[0] ? y0 : t >= xs[^1] ? yN : chip.Eval(t)) * mwi / 1000.0;
+                }
+            }
+            double pPaPh = input.PressureKpa!.Value * 1000.0;
+            // R19.6 (решение владельца А4): PH при WS — классическая энтальпия PR с честным
+            // предупреждением (не 400). GE-вклад в энтальпию не учтён: τ-константы без
+            // T-зависимости — H^E = −T²·∂(G^E/T)/∂T вырождается (фикция). Фуг-баланс PH-flash —
+            // классический PR (вложенный MixingContext.Use(null) подавляет GE-перенос).
+            bool wsPh = mixingRule is not null;
+            if (wsPh)
+            {
+                using (MixingContext.Use(null))
+                {
+                    if (mode == "ph")
+                        (result, warns) = SolveEnthalpyFlash(subs.Select(s => s.Name).ToArray(),
+                            subs.Select(s => s.Tc!.Value).ToArray(), subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                            subs.Select(s => s.Omega!.Value).ToArray(), subs.Select(s => s.Mw!.Value).ToArray(),
+                            z, pPaPh, input.EnthalpyJPerMol!.Value, kij, kijMatrix, cpig, gammaOfX);
+                    else
+                        (result, warns) = SolveEnthalpy(subs.Select(s => s.Name).ToArray(),
+                            subs.Select(s => s.Tc!.Value).ToArray(), subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                            subs.Select(s => s.Omega!.Value).ToArray(), subs.Select(s => s.Mw!.Value).ToArray(),
+                            z, tK, pPaPh, kij, kijMatrix, cpig, gammaOfX);
+                }
+                warns.Add("PH при Wong–Sandler: энтальпия посчитана классическим смешиванием PR — GE-вклад в энтальпию не учтён (τ-константы без T-зависимости: H^E = −T²·∂(G^E/T)/∂T вырождается); фуг-баланс PH-flash — классический PR.");
+            }
+            else if (mode == "ph")
+                (result, warns) = SolveEnthalpyFlash(subs.Select(s => s.Name).ToArray(),
+                    subs.Select(s => s.Tc!.Value).ToArray(), subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                    subs.Select(s => s.Omega!.Value).ToArray(), subs.Select(s => s.Mw!.Value).ToArray(),
+                    z, pPaPh, input.EnthalpyJPerMol!.Value, kij, kijMatrix, cpig, gammaOfX);
+            else
+                (result, warns) = SolveEnthalpy(subs.Select(s => s.Name).ToArray(),
+                    subs.Select(s => s.Tc!.Value).ToArray(), subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                    subs.Select(s => s.Omega!.Value).ToArray(), subs.Select(s => s.Mw!.Value).ToArray(),
+                    z, tK, pPaPh, kij, kijMatrix, cpig, gammaOfX);
+        }
+        else
+        {
+            result = Solve(subs.Select(s => s.Name).ToArray(),
+                subs.Select(s => s.Tc!.Value).ToArray(),
+                subs.Select(s => s.Pc!.Value * 1000.0).ToArray(),
+                subs.Select(s => s.Omega!.Value).ToArray(),
+                subs.Select(s => s.Mw!.Value).ToArray(), z, tK, kij, mode,
+                input.PressureKpa is null ? null : input.PressureKpa.Value * 1000.0, kijMatrix, gammaOfX);
+            warns = new List<string>();
+        }
+
+        warns.Add(kijMatrix != null
+            ? "PR EoS: k_ij — матрица per-pair (R17.2)."
+            : "PR EoS: k_ij — единый для всех пар (упрощение R17); для полярных пар (спирты, вода) точнее NRTL/UNIQUAC — этап R18.");
+        warns.AddRange(kijRefWarns);   // R19.1
+        if (gammaOfX != null)   // R18.4e
+            warns.Add("NRTL-активности жидкой фазы (γ-φ): γ входит в dew/flash; bubble остаётся идеальным при τ≠0 (ограничение γ-φ — см. CHANGELOG R18.4e).");
+        // R19.6: быстрые патчи предупреждений (решения владельца КП2.1, 19:19 15.11)
+        // R27 (N3): при WS l_ij = k_ij принимается ВСЕГДА (отдельного входа Lij нет) — предупреждение
+        // должно идти всегда и называть ИСТОЧНИК k_ij. Раньше условие (kijMatrix == null) после
+        // переноса блока R19.1 стало бы мёртвым (kijMatrix всегда non-null при автоподстановке).
+        if (mixingRule is WongSandlerMixingRule)
+            warns.Add("Wong–Sandler: принято l_ij = k_ij (источник: " + kijSourceLabel + "); отдельного входа LijPairs нет — l_ij наследует k_ij по практике R19.4/R19.5. Отдельные l_ij при разборе — расширение справочника.");
+        // С5 (решение владельца 16.11): предупреждение «оценочный» — БЕЗУСЛОВНОЕ в этом режиме,
+        // параметра отключения нет — случайно выключить в интерфейсе невозможно.
+        if (gammaOfX != null && mixingRule is null)   // А5
+        {
+            warns.Add(string.Equals(input.ActivityModel, "uniquac", StringComparison.OrdinalIgnoreCase)
+                ? "γ-φ (UNIQUAC без mixingRule) — ОЦЕНОЧНЫЙ режим: φ^id·γ-приближение; при полярных системах расхождение с φ-φ Wong–Sandler может достигать десятков процентов — для точных расчётов используйте mixingRule=\"wong-sandler\"."
+                : string.Equals(input.ActivityModel, "unifac", StringComparison.OrdinalIgnoreCase)
+                ? "γ-φ (UNIFAC без mixingRule) — ОЦЕНОЧНЫЙ режим: φ^id·γ-приближение; параметры оценены групповым методом — для точных расчётов используйте mixingRule=\"wong-sandler\" и uniquacPairs."
+                : "γ-φ (NRTL без mixingRule) — ОЦЕНОЧНЫЙ режим: φ^id·γ-приближение; при полярных системах завышение может достигать десятков процентов (вода/этанол 343.15 K: +65–69% против φ-φ Wong–Sandler) — для точных расчётов используйте mixingRule=\"wong-sandler\".");
+        }
+        if (string.Equals(input.ActivityModel, "uniquac", StringComparison.OrdinalIgnoreCase))
+        {
+            if (uniquacFallbackUsed)
+                warns.Add("UNIQUAC: uniquacPairs не заданы — γ оценены методом UNIFAC (PSRK-набор; параметры оценены групповым методом, не подогнаны по эксперименту) — решение владельца Б8 (слой 2).");
+            else if (input.UniquacPairs is not { Count: > 0 })
+                warns.Add("UNIQUAC: uniquacPairs не заданы — τ_ij = 1 (идеальная активность); результаты соответствуют классике PR.");
+            // С5 (решение владельца КП2.1 №2): ограничение VLE-подгонки
+            warns.Add("UNIQUAC: параметры подогнаны по VLE — LL-растворимость может предсказываться неточно (решение владельца КП2.1 №2, С5/Б8); LL-детекция R19.6 работает.");
+        }
+        if (string.Equals(input.ActivityModel, "unifac", StringComparison.OrdinalIgnoreCase) || uniquacFallbackUsed)
+        {
+            warns.Add("UNIFAC: параметры ОЦЕНЕНЫ методом UNIFAC (PSRK-набор: modified Dortmund с газовыми группами) — не подогнаны по эксперименту; точность ниже экспериментально подогнанных пар (решение владельца Б8, слой 2).");
+            warns.Add("UNIFAC: параметры подогнаны по VLE — LL-растворимость может предсказываться неточно (С5-оговорка); LL-детекция R19.6 работает.");
+        }
+        if ((input.NrtlPairs?.Count ?? 0) > 0 && mixingRule is WongSandlerMixingRule or null)   // А3
+        {
+            double tCal = input.NrtlTauCalibrationT ?? 343.15;
+            double dT = Math.Abs(tK - tCal);
+            if (dT > 15.0)
+                warns.Add(string.Format("NRTL: τ-константы откалиброваны при {0:0.#} K, расчёт при {1:0.#} K (отклонение {2:0.#} K) — τ заданы без T-зависимости; вне диапазона калибровки точность не гарантируется.", tCal, tK, dT));
+        }
+        // R28 (1.5-хвост): предупреждение о слиянии дубликатов состава.
+        if (dupMerged > 0)
+            warns.Add("R28 (1.5-хвост): дубликаты SubstanceId слиты в один компонент с суммарной долей (слито строк: " + dupMerged + ") — иначе расчёт шёл бы с двойным вкладом одного вещества без предупреждения.");
+
+        // R19.7: assumptions-строка источников UNIQUAC
+        if (string.Equals(input.ActivityModel, "uniquac", StringComparison.OrdinalIgnoreCase))
+            result["assumptions"] = ((string[])result["assumptions"]).Concat(new[] {
+                "UNIQUAC (R19.7): r_i/q_i — Bondi-вклады (открытые таблицы; сверены с базой thermo/ChemSep); τ_ij = exp(A_ij + B_ij/T) — ChemSep-параметры (permissive-лицензия, DWSIM-база); формулы — Abrams–Prausnitz (1975), z=10",
+                uniquacFallbackUsed
+                    ? "UNIFAC-fallback (R19.7b): γ оценены методом UNIFAC (PSRK-набор, открытые таблицы групп thermo/MIT) — параметры ОЦЕНЕНЫ, не подогнаны по эксперименту"
+                    : "" }).Where(s => s.Length > 0).ToArray();
+        // R27 (N1, решение владельца): provenance — проекция ФАКТИЧЕСКОГО состояния расчёта,
+        // а не независимого утверждения. Ловит класс дефектов A2/A3/C2/C3: расхождение
+        // «что посчитано» vs «что заявлено» видно сразу.
+        {
+            bool gammaUnity = gammaOfX is null;
+            if (gammaOfX != null)
+            {
+                try { var g0 = gammaOfX(z); gammaUnity = g0.All(gv => Math.Abs(gv - 1.0) < 1e-9); }
+                catch { gammaUnity = false; }
+            }
+            string activityActual = uniquacModel is not null
+                ? uniquacModel.Name
+                : (string.IsNullOrEmpty(input.ActivityModel) ? "ideal" : input.ActivityModel.ToLowerInvariant());
+            string solverRequested = mode == "flash" ? (input.FlashSolver ?? "auto")
+                : (mode == "ph" || mode == "enthalpy" ? "classic (политика PH — решение Р4, реестр R27)" : mode);
+            string solverUsed = result.TryGetValue("flash_solver_used", out var fsu) ? Convert.ToString(fsu) ?? "?" :
+                (mode == "bubble" ? "bubble-bisection" : mode == "dew" ? "dew-scan+bisection" : "classic-SS");
+            string kijEff = mixingRule is WongSandlerMixingRule
+                ? (input.Kij is double kvM ? $"l_ij = k_ij (ручной скаляр {kvM:0.###})"
+                   : input.KijPairs is { Count: > 0 } ? "l_ij = ручная матрица KijPairs"
+                   : "l_ij = k_ij (" + kijSourceLabel + ")")
+                : "— (классика: a_ij = √(a_i·a_j)·(1−k_ij))";
+            result["provenance"] = new Dictionary<string, object?>
+            {
+                ["calc_version"] = CalcMeta.Version,
+                ["tpd_form"] = input.TpdCorrect == true ? "correct" : "legacy",
+                ["solver_requested"] = solverRequested,
+                ["solver_used"] = solverUsed,
+                ["mixing_rule"] = mixingRule is WongSandlerMixingRule ? "wong-sandler" : "classic",
+                ["mixing_rule_vapor_actual"] = mixingRule is WongSandlerMixingRule
+                    ? (input.WsGeInVaporPhase == true ? "wong-sandler (GE в обеих фазах)" : "wong-sandler с G^E=0 в паре (не классика — R27/C3)")
+                    : "classic",
+                ["activity_model_actual"] = activityActual,
+                // R27: kij_source — КАТЕГОРИЯ (reference_v1 | manual_scalar | manual_matrix | zero),
+                // детальная формулировка — в kij_source_note (N1: проекция фактического состояния)
+                ["kij_source"] = kijSourceLabel.Contains("типовые") ? "reference_v1"
+                    : kijSourceLabel.Contains("ручной скаляр") ? "manual_scalar"
+                    : kijSourceLabel.Contains("ручная матрица") ? "manual_matrix" : "zero",
+                ["kij_source_note"] = kijSourceLabel,
+                ["kij_effective_in_rule"] = kijEff,
+                ["peneloux_applied"] = true,
+                ["gamma_is_unity"] = gammaUnity,
+            };
+        }
+        if (string.Equals(input.ActivityModel, "unifac", StringComparison.OrdinalIgnoreCase))
+            result["assumptions"] = ((string[])result["assumptions"]).Concat(new[] {
+                "UNIFAC (R19.7b): PSRK-UNIFAC (modified Dortmund с газовыми группами; Holderbaum–Gmehling 1991) — таблицы групп и взаимодействий открытые (база thermo/MIT, DDBST); γ-параметры ОЦЕНЕНЫ групповым методом, не подогнаны по эксперименту" }).ToArray();
+        if (input.WsGeInVaporPhase == true && mixingRule is not WongSandlerMixingRule)   // R19.6: флаг без WS
+            warns.Add("wsGeInVaporPhase: флаг сравнения игнорируется без mixingRule=\"wong-sandler\".");
+        // R19.6b: предупреждение о невалидном bubble-корне при wsMode (С1-ревизия)
+        if (result.TryGetValue("bubble_ss_valid", out var ssvObj) && ssvObj is bool ssv && ssv
+            && result.TryGetValue("bubble_ss_valid_P_kPa", out var ssvP) && ssvP is double ssvPv && ssvPv > 0)
+            warns.Add(string.Format(
+                "R17.2-шаг 2 (С1-а): найденный bubble-корень — псевдокорень (stability: однофазно); минимальный валидный корень по SS/min-G-критерию: {0} кПа (ключ bubble_ss_valid_P_kPa). Основное число НЕ заменено — замена по решению владельца после сверки с GERG-2008.", ssvPv));
+        if (result.TryGetValue("dew_stability_contradiction", out var dscObj) && dscObj is bool dsc && dsc)
+            warns.Add("R17.2-шаг 2: противоречие критериев в dew — stability-тест Мичельсена: однофазно, а бисекция нашла dew-границу; результат недостоверен (спящий критерий, dew-путь).");
+        if (result.TryGetValue("dew_T_stability_contradiction", out var dtcObj) && dtcObj is bool dtc && dtc)
+            warns.Add("R17.2-шаг 2: противоречие критериев в dew-T — stability-тест: однофазно, а скан по T нашёл границу; результат недостоверен (перенос dew-T на stability-базу — начато, С10).");
+        if (result.TryGetValue("bubble_stab_divergent", out var sdObj) && sdObj is bool sdbg && sdbg)
+        {
+            // R28 (1.2, ревью 20.11): флаг и значение разделены. После C4 поле может быть null —
+            // предупреждение обязано выходить и тогда (текст «не определена»), иначе поднятый флаг
+            // не доходит до пользователя — ровно тот класс, ради которого затевалась честность.
+            if (result.TryGetValue("bubble_stab_P_kPa", out var bsP) && bsP is double bsPv)
+                warns.Add(string.Format(
+                    "R20: классический bubble ({0:0.##} кПа) — не граница стабильности по критерию Мичельсена (min TPD<0 при найденной границе — жидкость z нестабильна); граница стабильности PR (результирующий путь): {1:0.##} кПа. Основное число не заменено — решение владельца (правило С2); сверка с GERG — в GERG-тестах.",
+                    result.TryGetValue("bubble_P_kPa", out var bpObj) && bpObj is double bpVal ? bpVal : double.NaN, bsPv));
+            else
+                warns.Add("R20: классический bubble — не граница стабильности по критерию Мичельсена; граница стабильности PR не определена (расчёт не сошёлся). Основное число не заменено (правило С2).");
+        }
+        if (result.TryGetValue("bubble_stab_no_liquid_branch", out var nlbObj) && nlbObj is bool nlb && nlb)
+            warns.Add("R20-шаг 2: жидкая ветка PR в вилке поиска не существует (изотерма однофазная) — двухфазная область по модели при заданных условиях отсутствует; классический bubble — вне физики модели. Сверка с GERG-2008 — в GERG-тестах; вопрос замены/уточнения (С1/С2) — за владельцем.");
+        if (result.TryGetValue("dew_stab_divergent", out var ddObj) && ddObj is bool ddg && ddg)
+        {
+            // R28 (1.2, dew-аналог bubble-варианта): флаг и значение разделены.
+            if (result.TryGetValue("dew_stab_P_kPa", out var dsP) && dsP is double dsPv)
+                warns.Add(string.Format(
+                    "R20: классический dew ({0:0.##} кПа) — не граница стабильности по критерию Мичельсена; граница стабильности PR (результирующий путь): {1:0.##} кПа. Основное число не заменено (правило С2).",
+                    result.ContainsKey("dew_P_kPa") ? Convert.ToDouble(result["dew_P_kPa"]) : double.NaN, dsPv));
+            else
+                warns.Add("R20: классический dew — не граница стабильности по критерию Мичельсена; граница стабильности PR не определена (расчёт не сошёлся). Основное число не заменено (правило С2).");
+        }
+        if (result.TryGetValue("dew_T_stab_divergent", out var dtObj) && dtObj is bool dtg && dtg)
+        {
+            // R28 (1.2, dew-T-аналог): флаг и значение разделены.
+            if (result.TryGetValue("dew_T_stab_K", out var dtK) && dtK is double dtKv)
+                warns.Add(string.Format(
+                    "R20: классический dew-T ({0:0.#} K) — не граница стабильности по критерию Мичельсена; граница по T (результирующий путь): {1:0.#} K. Основное число не заменено (правило С2).",
+                    result.ContainsKey("dew_T_K") ? Convert.ToDouble(result["dew_T_K"]) : double.NaN, dtKv));
+            else
+                warns.Add("R20: классический dew-T — не граница стабильности по критерию Мичельсена; граница по T не определена (расчёт не сошёлся). Основное число не заменено (правило С2).");
+        }
+        if (result.TryGetValue("bubble_spinodal_flag", out var spObj) && spObj is bool sp && sp)
+            warns.Add("R17.2: dP/dV > 0 на жидком корне при найденном P_bub — жидкая фаза механически нестабильна; точка может быть спинодалью, а не равновесием (детектор С1-в, решение владельца 16.11; min-G/TPD — R17.2-шаг 2).");
+        if (result.TryGetValue("bubble_stability_contradiction", out var scObj) && scObj is bool sc && sc)
+            warns.Add("R17.2: противоречие критериев — stability-тест Мичельсена: однофазно, а граничный поиск нашёл bubble-границу; результат недостоверен («спящий» критерий С7; точка расширения стартов — R17.2-шаг 2).");
+        if (MixingContext.Current is not null && result.TryGetValue("bubble_root_verified", out var bvObj) && bvObj is bool bv && !bv)
+            warns.Add(string.Format("Давление пузырька при Wong–Sandler: корень Σz_i·K_i=1 не найден (S={0:0.####} при найденной P={1} кПа); бисекция сошлась к границе liquid-ветки — результат может не быть равновесием; min-G-критерий — следующий шаг (решение С1 КП2.1 №2).",
+                result.TryGetValue("bubble_S_at_root", out var sObj) && sObj is double sObjv ? sObjv : double.NaN,   // R28: Convert.ToDouble(null)=0.0 — подмена не вычисленного
+                result.ContainsKey("bubble_P_kPa") ? result["bubble_P_kPa"] : (object)"?"));
+        // R22.1: жёсткое предупреждение при невалидном bubble-корне — всегда (не только WS)
+        if (result.TryGetValue("bubble_root_verified", out var bvObj22) && bvObj22 is bool bv22v && !bv22v)
+        {
+            string stabTxt22 = result.TryGetValue("bubble_stability_bound_P_kPa", out var sb22) && sb22 is double sb22v && sb22v > 0
+                ? string.Format("Результирующая величина — bubble_stability_bound_P_kPa = {0:0.##} кПа (граница по TPD-критерию; при WS — stability-граница Мичельсена).", sb22v)
+                : "Результирующая величина — bubble_stability_bound_P_kPa (граница по TPD-критерию; при WS — stability-граница Мичельсена).";
+            warns.Add("R22.1: «bubble» при этом расчёте — НЕ равновесие ΣzK=1: корень не верифицирован (|ΣzK−1| > 5e-3) — это граница liquid-ветки (спинодали), а не равновесие. " + stabTxt22 +
+                " Основное число bubble_P_kPa не заменено — решение владельца после приёмки.");
+        }
+        // R19.6b: предупреждение о Peneloux-сдвиге с величинами (решение владельца С4)
+        if (result.ContainsKey("rho_liquid_no_shift_kg_m3") && result.ContainsKey("rho_liquid_kg_m3"))
+        {
+            double rl = Convert.ToDouble(result["rho_liquid_kg_m3"]), rln = Convert.ToDouble(result["rho_liquid_no_shift_kg_m3"]);
+            double pctL = rln > 0 ? (rl / rln - 1.0) * 100.0 : 0;
+            string? extra = null;
+            if (result.ContainsKey("extra_bubble_roots_kPa") && result["extra_bubble_roots_kPa"] is double[] er && er.Length > 0)
+                extra = string.Format(" Обнаружено несколько корней ΣzK=1: P={0} кПа (выбран) и P={1:0.##} кПа (альтернатива); выбор — первый пересекающийся, min-G-критерий — после Peneloux (решение С1 КП2.1 №2).", result.ContainsKey("bubble_P_kPa") ? result["bubble_P_kPa"] : result["dew_P_kPa"], er[0]);
+            warns.Add(string.Format("Плотности с Peneloux-объёмным сдвигом (R19.6b): жидкая {0} кг/м³ (без сдвига была бы {1} кг/м³, {2:+0.##%;-0.##%}; до 11% на субохлаждённой жидкости — Peneloux, 1982; P/Z/фугазности — без сдвига). Для ассоциированных систем (вода/спирты) Peneloux может перекорректировать — сверяйте с *_no_shift-ключами.{3}", rl, rln, pctL / 100.0, extra ?? ""));
+        }
+        else if (result.ContainsKey("rho_phase_no_shift_kg_m3"))
+        {
+            double rp = Convert.ToDouble(result["rho_phase_kg_m3"]), rpn = Convert.ToDouble(result["rho_phase_no_shift_kg_m3"]);
+            double pct = rpn > 0 ? (rp / rpn - 1.0) * 100.0 : 0;
+            warns.Add(string.Format("Плотность с Peneloux-объёмным сдвигом (R19.6b): {0} кг/м³ (без сдвига была бы {1} кг/м³, {2:+0.##%;-0.##%}; P/Z/фугазности — без сдвига). Для ассоциированных систем — сверяйте с *_no_shift.", rp, rpn, pct / 100.0));
+        }
+        if (mixingRule != null)
+        {
+            string geName = string.Equals(input.ActivityModel, "uniquac", StringComparison.OrdinalIgnoreCase)
+                ? (uniquacFallbackUsed ? "UNIFAC" : "UNIQUAC")
+                : string.Equals(input.ActivityModel, "unifac", StringComparison.OrdinalIgnoreCase) ? "UNIFAC" : "NRTL";
+            warns.Add(MixingContext.GeInVaporPhase
+                ? string.Format("φ-φ Wong–Sandler (R19.6, флаг сравнения): a_mix/b_mix и φ_i по GE-переносу; G^E — от {0}; GE применяется к обеим фазам (R19.5-режим); k_ij/l_ij — матрица per-pair.", geName)
+                : string.Format("φ-φ Wong–Sandler (R19.6): a_mix/b_mix и φ_i по GE-переносу; G^E — от {0}; GE только в жидкой фазе (пар — классическое смешивание); k_ij/l_ij — матрица per-pair.", geName));
+        }
+        if (supercrit.Count > 0)
+            warns.Add($"Компоненты выше своей Tc при заданном T (сверхкритичны): {string.Join(", ", supercrit)} — жидкая фаза этих компонентов не образуется; расчёт выполняется по остальным.");
+        _log.LogInformation("PR-VLE: mode={M} n={N} T={T} kij={Kij} -> {Out}", mode, subs.Count, tK, kij, "-");
+        return new CalcResultDto(result, warns);
+        }   // R19.5: конец обёртки MixingContext
+    }
+
+    public static Dictionary<string, object?> Solve(string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double tK,
+        double kij = 0.0, string mode = "bubble", double? pressurePa = null, double[,]? kijMatrix = null,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        List<double>? extraRoots = null;   // R19.6b (в): соседние bubble-корни (кПа)
+        int n = tc.Length;
+        if (kij < -0.5 || kij > 0.5)
+            throw new ValidationException("k_ij должен быть в [-0.5; 0.5] (углеводородные пары 0…0.1; полярные 0.05…0.2).");
+        ValidateKijMatrix(kijMatrix, tc.Length);
+        var (a, b, aij) = PrParams(tc, pc, om, tK, kij, kijMatrix);
+
+        // R11-P0.5: T выше Tcrit самого тяжёлого компонента — двухфазного равновесия нет (сверхкритическое)
+        if (tK >= tc.Max())
+            throw new ValidationException(
+                $"Состояние сверхкритическое: T ({tK:0.#} K) выше Tcrit наименее летучего компонента ({tc.Max():0.#} K) — давление пузырька не существует. Снизьте T.");   // R16 (пул 1 п.15): max(Tc) — это наименее летучий
+        double pw = 0;
+        for (int i = 0; i < n; i++) pw += z[i] * WilsonPsat(tc[i], pc[i], om[i], tK);
+
+        if (mode == "dew")
+        {
+            if (pressurePa is double pGiven) return SolveDewT(names, tc, pc, om, mw, z, tK, pGiven, kij, kijMatrix, gammaOfX);
+            var dewRes = SolveDewP(names, tc, pc, om, mw, z, tK, kij, kijMatrix, gammaOfX);
+            if (extraRoots is not null) dewRes["extra_bubble_roots_kPa"] = extraRoots.Select(q => Math.Round(q / 1000.0, 2)).ToArray();
+            return dewRes;
+        }
+
+        // bubble (как в v30, сигнатура сохранена для эталонов)
+        double lo = 1e2, hi = pw * 3;
+        var yBuf = new double[n];
+        for (int i0 = 0; i0 < n; i0++) yBuf[i0] = z[i0];   // R27 (C1): гигиена — yBuf от z, а не от прошлого скана
+        // R11-P0.5: проверяем смену знака S(P)−1 на границах. Если корня нет (сверхкритическое
+        // состояние или P_bub за пределами вилки) — раньше бисекция тихо возвращала ложный P_bub.
+        var (sLo, okLo, _) = SumK(lo, tK, aij, a, b, z, yBuf, gammaOfX);
+        var (sHi, okHi, _) = SumK(hi, tK, aij, a, b, z, yBuf, gammaOfX);
+        if (okLo && okHi && Math.Sign(sLo - 1.0) == Math.Sign(sHi - 1.0))
+            throw new ValidationException(
+                "Давление пузырька не найдено: расширьте диапазон T или проверьте состав и константы " +
+                "(возможно, состояние сверхкритическое — T выше Tcrit смеси).");
+        for (int iter = 0; iter < 80; iter++)
+        {
+            double mid = (lo + hi) / 2;
+            var (S, ok, dir) = SumK(mid, tK, aij, a, b, z, yBuf, gammaOfX);
+            if (!ok) { if (dir > 0) lo = mid; else hi = mid; }
+            else if (S > 1.0) lo = mid;
+            else hi = mid;
+        }
+        double pBub = lo;
+
+        // R19.6b (С1-ревизия, решение владельца КП2.1 №2): верификация найденного корня при wsMode —
+        // бисекция при GE-моделях может сойтись к границе liquid-ветки (спинодали), где равновесия
+        // нет. Ревизия эталона (R19.6b): CH4/C2H6 ge-liq-only @200 K — корня ΣzK=1 не существует
+        // (S_min≈1.45); прежний эталон «2118.2» — артефакт ошибки фазового контекста производных.
+        // Форма честности: НЕ отказ, а предупреждение + флаг bubble_root_verified=false в result —
+        // расчёт сохраняет значение, но пользователь видит, что это граница liquid-ветки, а не
+        // равновесие (min-G-критерий — следующий шаг).
+        bool bubbleVerified = true; double sChkVal = double.NaN; bool rootOk = true;
+        // R17.2-шаг 2 (С1-а): скан альтернативных корней — теперь и для классики (раньше только WS).
+        var extra = ScanExtraBubbleRoots(pBub, tK, aij, a, b, z, yBuf, gammaOfX);
+        if (extra.Count > 0)
+            extraRoots = extra;
+        // R22.1: верификация корня — ВСЕГДА (не только WS): |ΣzK−1| ≤ 5e-3 → равновесие;
+        // при wsMode поведение прежнее (R19.6b), при классике — добавлен честный флаг.
+        {
+            var (sChk, okChk, _) = SumK(pBub, tK, aij, a, b, z, yBuf, gammaOfX);
+            rootOk = okChk;
+            if (!okChk || Math.Abs(sChk - 1.0) > 5e-3)
+            {
+                bubbleVerified = false;
+                sChkVal = okChk ? sChk : double.NaN;
+            }
+        }
+
+        var (zL, phiL, _, _) = ZAndPhi(pBub, tK, aij, a, b, z, liquid: true);
+        // R17.2 (решение владельца КП2.1 16.11): С1-в — детектор спинодали; С7 — «спящий» критерий
+        // противоречия stability↔границы. Механика: dP/dV>0 на жидком корне = механическая
+        // нестабильность (спинодальная зона); stability-тест Мичельсена при найденной P_bub:
+        // «однофазно» при найденной границе = противоречие критериев. Оба — предупреждения,
+        // расчёт не прерывается (честная маркировка, не отказ).
+        double dPdVLiq = SpinodalDpdv(aij, a, b, z, tK, zL, pBub);
+        bool spinodalFlag = double.IsFinite(dPdVLiq) && dPdVLiq > 0;
+        bool stabilityContradiction = false;
+        double? ssValidP = null;
+        (double Tpd, double[] W)? mtpd7 = null;
+        try
+        {
+            // R20-шаг 1 (уточнение порога С7): противоречие = (а) жидкая опора — single-корень
+            // (настоящего жидкого корня нет — псевдокорень на границе liquid-ветки, кейс N2/CO2 @250);
+            // (б) min TPD ЯВНО > 1e-4 (определённо стабильна; на границе bubble min TPD ≈ 0 — шум).
+            var (zL7, _, single7, rootL7) = ZAndPhi(pBub, tK, aij, a, b, z, liquid: true);
+            mtpd7 = MichelsenFlash.MinTpd((xx, liq) => ZAndPhi(pBub, tK, aij, a, b, xx, liq), z, liquidRef: true, probeLiquid: false);
+            // R20-шаг 2 (уточнение): contradiction — только при single-опоре (объективный факт:
+            // настоящего жидкого корня нет). min TPD > 1e-4 при существующей жидкой ветке НЕ считается
+            // противоречием: MinTpd может не сойтись к пар-пробе при больших отношениях фугазностей
+            // (вода/этанол @343: min TPD=0.0235 при валидной классике — ложная тревога; открытая
+            // точка R21: демпфирование/ускорение фикс-точки Мичельсена).
+            if (single7)   // только single-опора — объективный факт «жидкой ветки нет»; rootIsL при не-single всегда null
+            {
+                stabilityContradiction = true;   // stability: жидкой ветки нет при найденной границе
+                // R17.2-шаг 2 (С1-а, решение владельца 16.11): min-G/SS-критерий — при псевдокорне
+                // ищем минимальный ВАЛИДНЫЙ корень (SS-решение с β>0) среди альтернативных ниже P.
+                if (extraRoots is { Count: > 0 })
+                    foreach (var pAlt in extraRoots.Where(q => q < pBub).OrderBy(q => q))
+                    {
+                        try
+                        {
+                            var mAlt = MichelsenFlash.Solve((xx, liq) => ZAndPhi(pAlt, tK, aij, a, b, xx, liq), z, tK, pAlt, tc, pc, om);
+                            if (mAlt.Beta > 1e-9) { ssValidP = pAlt; break; }
+                        }
+                        catch { /* кандидат не валиден — пропускаем */ }
+                    }
+            }
+        }
+        catch { /* TPD недоступен при этой точке — противоречие не фиксируем */ }
+
+        // R20-шаг 1 (решение владельца 16.11): перенос stability-теста на bubble — ДИАГНОСТИЧЕСКИЙ
+        // stability-бисекционный путь: запускается только при признаках проблемы (псевдокорень,
+        // спинодаль-флаг) — нормальные кейсы не платят по времени. Ищем границу фазовой
+        // стабильности по знаку min TPD жидкой опоры; сравнение с классикой — в ключи/предупреждения.
+        // Замена основного числа — только по решению владельца (правило С2).
+        double? stabP = null;
+        bool noLiquidBranch = false;
+        bool mtpd7Unstable = mtpd7 is not null && mtpd7.Value.Tpd < -1e-3;   // классика не граница стабильности
+        if (stabilityContradiction || spinodalFlag || mtpd7Unstable)
+        {
+            var sb = StabilityBisectP(aij, a, b, z, tK, tc, pc, om, liquidRef: true);
+            stabP = sb.P;
+            noLiquidBranch = sb.NoLiquidBranch;
+        }
+        var (_, phiV0, _, _) = ZAndPhi(pBub, tK, aij, a, b, z, liquid: false);
+        var y = new double[n];
+        if (MixingContext.Current is not null)
+        {
+            // R19.5: φV при WS зависит от состава пара — y сходится циклом (как в SumK);
+            // однопроходный y (φV при z) при GE-моделях занижает летучесть лёгкого компонента
+            // (эталон-кейс CH4/C2H6 WS: однопроходный y_CH4=0.848 против итеративного 0.9035).
+            Array.Copy(z, y, n);
+            for (int iter = 0; iter < 45; iter++)
+            {
+                var (_, phiVi, _, _) = ZAndPhi(pBub, tK, aij, a, b, y, liquid: false);
+                double syWs = 0;
+                var yn = new double[n];
+                for (int i = 0; i < n; i++) { yn[i] = z[i] * (phiL[i] / Math.Max(phiVi[i], 1e-12)); syWs += yn[i]; }
+                if (syWs <= 0 || !double.IsFinite(syWs)) break;
+                for (int i = 0; i < n; i++) y[i] = yn[i] / syWs;
+            }
+        }
+        else
+        {
+            // R27 (C1, ревью 19.11): раньше y вычислялся ОДНОПРОХОДНО от φV(z), хотя проверочный
+            // SumK(pBub) уже сходил y в yBuf (45 итераций, R18.4d) — ρ_vapor и mw_vapor наследовали
+            // ошибку. При валидном корне берём сошедшийся yBuf; при псевдокорне — прежний фолбэк.
+            // R28 (2.1, ревью 20.11): rootOk = сходимость SumK (допуск ~2e-3) — all-finite и
+            // нормировка |Σy−1|<1e-9 до копирования НЕ проверялись. Копируем сошедшийся yBuf
+            // только при валидной нормировке, иначе — прежний однопроходный фолбэк.
+            bool yFromBuf = rootOk;
+            if (yFromBuf)
+            {
+                double sy2 = 0;
+                for (int i = 0; i < n; i++) { if (!double.IsFinite(yBuf[i])) yFromBuf = false; sy2 += yBuf[i]; }
+                if (Math.Abs(sy2 - 1.0) >= 1e-9) yFromBuf = false;
+            }
+            if (yFromBuf)
+            {
+                for (int i = 0; i < n; i++) y[i] = yBuf[i];
+            }
+            else
+            {
+                double sy = 0;
+                for (int i = 0; i < n; i++) { y[i] = z[i] * (phiL[i] / Math.Max(phiV0[i], 1e-12)); sy += y[i]; }
+                if (sy <= 0 || !double.IsFinite(sy))
+                    throw new ValidationException("Не сошлось фазовое равновесие: проверьте состав и температуру.");
+                for (int i = 0; i < n; i++) y[i] /= sy;
+            }
+        }
+        var (zV, _, _, _) = ZAndPhi(pBub, tK, aij, a, b, y, liquid: false);
+
+        double mwMix = z.Zip(mw, (zi, m) => zi * m).Sum();
+        double mwV = y.Zip(mw, (yi, m) => yi * m).Sum();
+        // R19.6b: Peneloux-сдвиг плотностей (решение владельца А6; только отчётные значения)
+        var (rhoLs, rhoLn) = PenelouxShift.Densities(mwMix, zL, pBub, tK, PenelouxShift.MixC(z, tc, pc, om));
+        var (rhoVs, rhoVn) = PenelouxShift.Densities(mwV, zV, pBub, tK, PenelouxShift.MixC(y, tc, pc, om));
+
+        // R18: кросс-сервисная проверка «Рауль (правило Кея) vs PR» — расхождение > 20% → предупреждение
+        double psatKay = 0;
+        for (int i = 0; i < n; i++) psatKay += z[i] * WilsonPsat(tc[i], pc[i], om[i], tK);
+        double crossPct = psatKay > 0 ? Math.Abs(pBub - psatKay) / psatKay : 0;
+
+        var res = new Dictionary<string, object?>
+        {
+            ["bubble_P_kPa"] = Math.Round(pBub / 1000.0, 2),
+            ["T_K"] = Math.Round(tK, 1),
+            ["method"] = MethodLabel("Пенг-Робинсон (PR EoS, 1976): P пузырька бисекцией по Σ z·K; K = φL/φV; фугазности — Кардано"),
+            ["reference"] = "Peng & Robinson, Ind. Eng. Chem. Fundam. 15(1), 1976; Wilson K-оценка (1969)",
+            ["assumptions"] = AssumptionsWithWs(kijMatrix != null ? "k_ij — матрица per-pair (R17.2); значения — в предупреждениях (R19.1: типовой справочник или ручной ввод)"
+                : (kij == 0 ? "k_ij = 0 (a_ij = sqrt(ai*aj))" : string.Format("k_ij = {0:0.###} для всех пар", kij))).Concat(new[] { PenelouxShift.Assumption }).ToArray(),
+            ["calc_version"] = CalcMeta.Version,
+            ["kij_used"] = kij,
+            ["kay_raoult_cross_check_kPa"] = Math.Round(psatKay / 1000.0, 2),
+            ["kay_pr_divergence_pct"] = Math.Round(crossPct * 100, 1),
+            // R27 (C4): 0.0 неотличим от «не вычислено» и физически осмысленен (сентинел-принцип) —
+            // «не вычислено» = null (фронт рендерит «—»).
+            ["bubble_dpdv_liq_per_mol"] = double.IsFinite(dPdVLiq) ? (object?)Math.Round(dPdVLiq, 3) : null,
+            ["bubble_ss_valid_P_kPa"] = ssValidP is double sv ? (object?)Math.Round(sv / 1000.0, 2) : null,
+            ["bubble_stab_P_kPa"] = stabP is double spv ? (object?)Math.Round(spv / 1000.0, 2) : null,
+            // R22.1: контракт семантики bubble (4 поля; bubble_P_kPa НЕ заменён — приёмка владельцем)
+            ["bubble_stability_bound_P_kPa"] = stabP is double spb2 ? (object?)Math.Round(spb2 / 1000.0, 2) : null,
+            ["bubble_equilibrium_P_kPa"] = bubbleVerified ? (object?)Math.Round(pBub / 1000.0, 2) : null,
+            ["bubble_root_verified"] = bubbleVerified,
+            ["root_selection_status"] = bubbleVerified ? (extraRoots is { Count: > 0 } ? "multiple_roots" : "equilibrium")
+                : noLiquidBranch ? "no_liquid_branch" : rootOk ? "pseudoroot" : "stability_bound",
+            ["Z_liquid"] = Math.Round(zL, 4),
+            ["Z_vapor"] = Math.Round(zV, 4),
+            ["rho_liquid_kg_m3"] = Math.Round(rhoLs, 1),
+            ["rho_liquid_no_shift_kg_m3"] = Math.Round(rhoLn, 1),
+            ["rho_vapor_kg_m3"] = Math.Round(rhoVs, 2),
+            ["rho_vapor_no_shift_kg_m3"] = Math.Round(rhoVn, 2),
+            ["mw_vapor_g_mol"] = Math.Round(mwV, 2),
+            ["y_vapor"] = y.Select((yi, i) => new { name = names[i], y = Math.Round(yi, 4) }).ToArray(),
+            ["x_liquid"] = z.Select((zi, i) => new { name = names[i], x = Math.Round(zi, 4) }).ToArray(),
+        };
+        if (extraRoots is not null)
+            res["extra_bubble_roots_kPa"] = extraRoots.Select(q => Math.Round(q / 1000.0, 2)).ToArray();
+        if (ssValidP is not null) res["bubble_ss_valid"] = true;   // С1-а: минимальный валидный корень найден
+        if (stabP is double spd && Math.Abs(spd - pBub) / Math.Max(pBub, 1e-9) > 0.01)
+            res["bubble_stab_divergent"] = true;   // R20: классика — не граница стабильности (псевдокорень)
+        if (noLiquidBranch) res["bubble_stab_no_liquid_branch"] = true;   // R20-шаг 2: жидкой ветки PR нет
+        if (spinodalFlag) res["bubble_spinodal_flag"] = true;             // С1-в
+        if (stabilityContradiction) res["bubble_stability_contradiction"] = true;   // С7
+        res["bubble_root_verified"] = bubbleVerified;   // R22.1: всегда (не только WS)
+        if (!bubbleVerified) res["bubble_S_at_root"] = double.IsFinite(sChkVal) ? (object?)Math.Round(sChkVal, 4) : null;   // R28 (selfcheck R1): «не вычислено» — null, не 0.0
+        return res;
+    }
+
+    // ---------- R17: параметры PR с k_ij ----------
+    // R19.4: public — используется WongSandlerMixingRule (чистые a_i(T)/b_i)
+    public static (double[] a, double[] b, double[,] aij) PrParams(double[] tc, double[] pc, double[] om, double tK, double kij, double[,]? kijOverride = null)
+    {
+        int n = tc.Length;
+        double[] a = new double[n], b = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double kap = 0.37464 + 1.54226 * om[i] - 0.26992 * om[i] * om[i];
+            a[i] = 0.45724 * R * R * tc[i] * tc[i] / pc[i] * Math.Pow(1 + kap * (1 - Math.Sqrt(tK / tc[i])), 2);
+            b[i] = 0.07780 * R * tc[i] / pc[i];
+        }
+        var aij = new double[n, n];
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+                aij[i, j] = (i == j) ? a[i] : Math.Sqrt(a[i] * a[j]) * (1.0 - (kijOverride != null ? kijOverride[i, j] : kij));   // R17/R17.2: единый k_ij или матрица per-pair
+        return (a, b, aij);
+    }
+
+    // ---------- R17: давление росы (dew-P) ----------
+    private static Dictionary<string, object?> SolveDewP(string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double tK, double kij, double[,]? kijMatrix,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        var (a, b, aij) = PrParams(tc, pc, om, tK, kij, kijMatrix);
+        // грубый поиск смены знака S_dew − 1 по мультипликативной сетке (при P→0 S→1 численно неустойчиво)
+        double pLo = 0.0, pHi = 0.0, sLoVal = double.NaN;
+        double prevP = 1.0, prevS = double.NaN;
+        for (int step = 0; step < 70; step++)
+        {
+            double p = prevP * 2.5;   // 1 Па → ~60 МПа за 20 шагов
+            var (S, _) = SumKdew(p, tK, aij, a, b, z, gammaOfX);
+            if (double.IsFinite(prevS) && double.IsFinite(S) && Math.Sign(S - 1.0) != Math.Sign(prevS - 1.0))
+            {
+                pLo = prevP; sLoVal = prevS; pHi = p;
+                break;
+            }
+            prevP = p; prevS = S;
+        }
+        if (pLo == 0.0 || Math.Sign(sLoVal - 1.0) == 0)
+            throw new ValidationException(
+                "Давление росы не найдено: T вне двухфазной области или состав вырожденный. Проверьте T/состав.");
+        double lo = pLo, hi = pHi;
+        for (int iter = 0; iter < 90; iter++)
+        {
+            double mid = Math.Sqrt(lo * hi);   // лог-бисекция: S зависит от P сильно
+            var (S, _) = SumKdew(mid, tK, aij, a, b, z, gammaOfX);
+            if (double.IsNaN(S)) { hi = mid; continue; }
+            if ((S - 1.0) * (sLoVal - 1.0) < 0) hi = mid; else { lo = mid; sLoVal = S; }
+        }
+        double pDew = Math.Sqrt(lo * hi);
+        var (Sf, xF) = SumKdew(pDew, tK, aij, a, b, z, gammaOfX);
+        if (!double.IsFinite(Sf) || Math.Abs(Sf - 1.0) > 0.02)
+            throw new ValidationException("Давление росы не сошлось (Σ z/K ≠ 1): проверьте состав и T.");
+        // R17.2-шаг 2 (С1-б): stability-верификация dew-P: пар-опора z при найденной P_dew;
+        // «однофазно» (β≈1) при найденной границе = противоречие критериев (спящий критерий, dew-путь).
+        bool dewContradiction = false;
+        try
+        {
+            var mtpdD = MichelsenFlash.MinTpd((xx, liq) => ZAndPhi(pDew, tK, aij, a, b, xx, liq), z, liquidRef: false, probeLiquid: true);
+            if (mtpdD is not null && mtpdD.Value.Tpd > 1e-4) dewContradiction = true;
+        }
+        catch { /* TPD недоступен — молчим (R17.2-шаг 2) */ }
+        // R20-шаг 1: при противоречии — stability-бисекция по паровой опоре (диагностика)
+        double? dewStabP = null;
+        if (dewContradiction)
+            dewStabP = StabilityBisectP(aij, a, b, z, tK, tc, pc, om, liquidRef: false).P;
+        var (zVroot, _, _, _) = ZAndPhi(pDew, tK, aij, a, b, z, liquid: false);
+        var (zLr, _, _, _) = ZAndPhi(pDew, tK, aij, a, b, xF, liquid: true);
+
+        double mwMix = z.Zip(mw, (zi, m) => zi * m).Sum();
+        double mwLiq = xF.Zip(mw, (xi, m) => xi * m).Sum();   // R19.6b: mw жидкой фазы от x (уточнение R17-неточности)
+        var (rhoVs, rhoVn) = PenelouxShift.Densities(mwMix, zVroot, pDew, tK, PenelouxShift.MixC(z, tc, pc, om));
+        var (rhoLs, rhoLn) = PenelouxShift.Densities(mwLiq, zLr, pDew, tK, PenelouxShift.MixC(xF, tc, pc, om));
+
+        var res = new Dictionary<string, object?>
+        {
+            ["dew_P_kPa"] = Math.Round(pDew / 1000.0, 2),
+            ["dew_stability_contradiction"] = dewContradiction,
+            ["dew_stab_P_kPa"] = dewStabP is double dspv ? (object?)Math.Round(dspv / 1000.0, 2) : null,   // R28 (аудит 1.2): единая null-семантика C4
+            ["T_K"] = Math.Round(tK, 1),
+            ["method"] = MethodLabel("Пенг-Робинсон: P росы бисекцией по Σ z/K; K = φL(x)/φV(z); x обновляется до сходимости"),
+            ["reference"] = "Peng & Robinson, 1976; dew-условие Σ z_i/K_i = 1",
+            ["assumptions"] = AssumptionsWithWs(kijMatrix != null ? "k_ij — матрица per-pair (R17.2); значения — в предупреждениях (R19.1: типовой справочник или ручной ввод)"
+                : (kij == 0 ? "k_ij = 0" : string.Format("k_ij = {0:0.###} для всех пар", kij))).Concat(new[] { PenelouxShift.Assumption }).ToArray(),
+            ["calc_version"] = CalcMeta.Version,
+            ["kij_used"] = kij,
+            ["Z_vapor"] = Math.Round(zVroot, 4),
+            ["Z_liquid"] = Math.Round(zLr, 4),
+            ["rho_vapor_kg_m3"] = Math.Round(rhoVs, 2),
+            ["rho_vapor_no_shift_kg_m3"] = Math.Round(rhoVn, 2),
+            ["rho_liquid_kg_m3"] = Math.Round(rhoLs, 1),
+            ["rho_liquid_no_shift_kg_m3"] = Math.Round(rhoLn, 1),
+            ["x_liquid"] = xF.Select((xi, i) => new { name = names[i], x = Math.Round(xi, 4) }).ToArray(),
+        };
+        if (dewStabP is double dspd && Math.Abs(dspd - pDew) / Math.Max(pDew, 1e-9) > 0.01)
+            res["dew_stab_divergent"] = true;   // R20-шаг 1: классика и stability-бисекция расходятся
+        return res;
+    }
+
+    // ---------- R17: температура росы (dew-T) при заданном P ----------
+    private static Dictionary<string, object?> SolveDewT(string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double tK, double pGiven, double kij, double[,]? kijMatrix,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        double tScanLo = Math.Max(1.0, tc.Min() * 0.3), tScanHi = tc.Max() * 0.9995;
+        if (tK < tScanLo || tK > tScanHi)
+            throw new ValidationException($"Dew-T ищется в диапазоне температур [{tScanLo:0.#}–{tScanHi:0.#}] K; заданное T вне диапазона.");
+        // фикс v31: сканирование по T — вырожденные single-корни дают S≡1 (K=1), знаки по конечным S≠1
+        double lo = 0.0, hi = 0.0, sLoVal = double.NaN;
+        {
+            double tPrev = double.NaN, sPrev = double.NaN;
+            for (int step = 0; step <= 80; step++)
+            {
+                double tt = tScanLo + (tScanHi - tScanLo) * step / 80.0;
+                var (am, bm, amij) = PrParams(tc, pc, om, tt, kij, kijMatrix);
+                var (S, _) = SumKdew(pGiven, tt, amij, am, bm, z, gammaOfX);
+                if (!double.IsFinite(S)) continue;
+                int sg = Math.Sign(S - 1.0);
+                if (sg == 0) continue;
+                if (!double.IsNaN(sPrev) && sg != Math.Sign(sPrev - 1.0))
+                {
+                    lo = Math.Min(tPrev, tt); sLoVal = sPrev; hi = Math.Max(tPrev, tt);
+                    break;
+                }
+                tPrev = tt; sPrev = S;
+            }
+        }
+        if (lo == 0.0)
+            throw new ValidationException("Температура росы не найдена: P вне двухфазной области смеси (S(T) не меняет знак в диапазоне). Проверьте P/состав.");
+        for (int iter = 0; iter < 90; iter++)
+        {
+            double mid = (lo + hi) / 2;
+            var (am, bm, amij) = PrParams(tc, pc, om, mid, kij, kijMatrix);
+            var (S, _) = SumKdew(pGiven, mid, amij, am, bm, z, gammaOfX);
+            if (double.IsNaN(S)) { hi = mid; continue; }
+            if ((S - 1.0) * (sLoVal - 1.0) < 0) hi = mid; else { lo = mid; sLoVal = S; }
+        }
+        double tDew = (lo + hi) / 2;
+        if (tScanHi - tDew < 1e-6 * tScanHi)
+            throw new ValidationException($"Температура росы не найдена: P = {pGiven / 1000.0:0.#} кПа выше/на границе двухфазной области при сверхкритическом компоненте (guard tHi). Проверьте P/состав.");
+        var (aM, bM, aijM) = PrParams(tc, pc, om, tDew, kij, kijMatrix);
+        var (Sfinal, xF) = SumKdew(pGiven, tDew, aijM, aM, bM, z, gammaOfX);
+        if (!double.IsFinite(Sfinal) || Math.Abs(Sfinal - 1.0) > 0.02)
+            throw new ValidationException("Температура росы не сошлась (Σ z/K ≠ 1): проверьте P и состав.");
+        // R17.2-шаг 2 (С10): stability-верификация dew-T: пар-опора z при найденной T_dew;
+        // «однофазно» при найденной границе = противоречие (перенос dew-T на stability-базу — начато).
+        bool dewTContradiction = false;
+        (double Tpd, double[] W)? mtpdDT = null;
+        try
+        {
+            mtpdDT = MichelsenFlash.MinTpd((xx, liq) => ZAndPhi(pGiven, tDew, aijM, aM, bM, xx, liq), z, liquidRef: false, probeLiquid: true);
+            if (mtpdDT is not null && mtpdDT.Value.Tpd > 1e-4) dewTContradiction = true;
+        }
+        catch { /* TPD недоступен — молчим */ }
+        // R20-шаг 1: при противоречии — stability-бисекция по T (диагностика, пар-опора)
+        double? dewStabT = null;
+        bool mtpdDTUnstable = mtpdDT is not null && mtpdDT.Value.Tpd < -1e-3;   // классика не граница стабильности
+        if (dewTContradiction || mtpdDTUnstable)
+            dewStabT = StabilityBisectT(pGiven, tc, pc, om, z, kij, kijMatrix, tScanLo, tScanHi);
+        var (zVroot2, _, _, _) = ZAndPhi(pGiven, tDew, aijM, aM, bM, z, liquid: false);
+        double mwV = z.Zip(mw, (zi, m) => zi * m).Sum();
+        var (rhoVs, rhoVn) = PenelouxShift.Densities(mwV, zVroot2, pGiven, tDew, PenelouxShift.MixC(z, tc, pc, om));
+
+        var res = new Dictionary<string, object?>
+        {
+            ["dew_T_stability_contradiction"] = dewTContradiction,
+            ["dew_T_stab_K"] = dewStabT is double dstv ? Math.Round(dstv, 1) : 0.0,
+            ["dew_T_K"] = Math.Round(tDew, 1),
+            ["dew_T_C"] = Math.Round(tDew - 273.15, 1),
+            ["P_kPa"] = Math.Round(pGiven / 1000.0, 2),
+            ["method"] = MethodLabel("Пенг-Робинсон: T росы бисекцией по Σ z/K = 1 при заданном P"),
+            ["reference"] = "Peng & Robinson, 1976",
+            ["assumptions"] = AssumptionsWithWs(kij == 0 ? "k_ij = 0" : string.Format("k_ij = {0:0.###} для всех пар", kij)).Concat(new[] { PenelouxShift.Assumption }).ToArray(),
+            ["calc_version"] = CalcMeta.Version,
+            ["kij_used"] = kij,
+            ["Z_vapor"] = Math.Round(zVroot2, 4),
+            ["rho_vapor_kg_m3"] = Math.Round(rhoVs, 2),
+            ["rho_vapor_no_shift_kg_m3"] = Math.Round(rhoVn, 2),
+            ["x_liquid"] = xF.Select((xi, i) => new { name = names[i], x = Math.Round(xi, 4) }).ToArray(),
+        };
+        if (dewStabT is double dstd && Math.Abs(dstd - tDew) / Math.Max(tDew, 1e-9) > 0.01)
+            res["dew_T_stab_divergent"] = true;   // R20-шаг 1: классика и stability-бисекция расходятся
+        return res;
+    }
+
+    // R18.4d: SumK (bubble) теперь симметричен этой функции — x/y-цикл до сходимости в обеих бисекциях
+    private static (double S, double[] x) SumKdew(double p, double tK, double[,] aij, double[] a, double[] b, double[] z,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        int n = z.Length;
+        var x = (double[])z.Clone();
+        double S = double.NaN;
+        for (int it = 0; it < 45; it++)
+        {
+            var (_, pL, _, _) = ZAndPhi(p, tK, aij, a, b, x, liquid: true);
+            if (gammaOfX != null)   // R18.4e: NRTL-активности от текущего x жидкой фазы
+            {
+                var g = gammaOfX(x);
+                for (int i = 0; i < n; i++) pL[i] *= g[i];
+            }
+            var (_, pV, _, _) = ZAndPhi(p, tK, aij, a, b, z, liquid: false);
+            S = 0; double sx = 0;
+            var xn = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                double K = pL[i] / Math.Max(pV[i], 1e-12);
+                double ziOverK = z[i] / Math.Max(K, 1e-12);
+                S += ziOverK; xn[i] = ziOverK; sx += ziOverK;
+            }
+            if (sx <= 0 || !double.IsFinite(sx)) return (double.NaN, x);
+            for (int i = 0; i < n; i++) x[i] = xn[i] / sx;
+        }
+        return (S, x);
+    }
+
+        // ---------- R17: PT-flash (Рачфорд–Райс) + stability-границы ----------
+    // R17.2: старая сигнатура сохранена (эталоны R17); доступ к beta/x/y — SolveFlashFull
+    // R22.1: solver = classic|michelsen|auto. Прямые вызовы — classic (эталоны R17–R21 без изменений);
+    // HTTP-дефолт auto (RunAsync). auto → Мичельсен при GE/WS/LL-признаках; классика — с авто-
+    // переключением при нестабильности жидкой опоры однофазного ответа (MinTpd-прокси, R21b)
+    // или несходимости SS. При wsMode — всегда Мичельсен (R19.6-эталоны).
+    public static (Dictionary<string, object?> result, List<string> warns) SolveFlash(
+        string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double tK, double pPa, double kij,
+        double[,]? kijMatrix = null, Func<double[], double[]>? gammaOfX = null,
+        string solver = "classic", bool tpdCorrect = false)
+    {
+        var (r, w, _, _, _, _, _) = SolveFlashFull(names, tc, pc, om, mw, z, tK, pPa, kij, kijMatrix, gammaOfX, solver, tpdCorrect);
+        return (r, w);
+    }
+
+    public static (Dictionary<string, object?> result, List<string> warns, double beta, double[]? x, double[]? y, double zL, double zV) SolveFlashFull(
+        string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double tK, double pPa, double kij,
+        double[,]? kijMatrix = null, Func<double[], double[]>? gammaOfX = null,
+        string solver = "classic", bool tpdCorrect = false, string? modeOverride = null)
+    {
+        if (solver is not ("classic" or "michelsen" or "auto"))
+            throw new ValidationException("flash_solver: classic | michelsen | auto.");
+        int n = tc.Length;
+        ValidateKijMatrix(kijMatrix, n);
+        if (tK >= tc.Max())
+            throw new ValidationException(
+                $"Состояние сверхкритическое: T ({tK:0.#} K) выше Tcrit наименее летучего компонента ({tc.Max():0.#} K) — двухфазного равновесия нет. Снизьте T.");
+        var (a, b, aij) = PrParams(tc, pc, om, tK, kij, kijMatrix);
+        if (kij < -0.5 || kij > 0.5)
+            throw new ValidationException("k_ij должен быть в [-0.5; 0.5].");
+
+        bool wsMode = MixingContext.Current is not null;   // R19.5/R19.6
+        // R22.1: flash_solver = classic|michelsen|auto. Прямые вызовы — classic (эталоны R17–R21);
+        // HTTP-дефолт auto (RunAsync). auto → Мичельсен сразу при GE/WS (γ-φ); классика — с авто-
+        // переключением при нестабильности жидкой опоры однофазного ответа (MinTpd-прокси, R21b)
+        // или несходимости SS. При wsMode — всегда Мичельсен (R19.6-эталоны заморожены).
+        bool autoMode = solver == "auto";
+        bool michelsenWanted = wsMode || solver == "michelsen" || (autoMode && (wsMode || gammaOfX != null));
+        string solverUsed = michelsenWanted ? "michelsen" : "classic";
+        string solverModeOut = modeOverride ?? solver;   // R22.1: auto-переключение сохраняет запрошенный режим
+        // R22.1: γ от жидкой фазы добавляется к φL-пробам Мичельсена (двойного учёта с WS нет:
+        // при wsMode gammaOfX обнулён в RunAsync).
+        (double Z, double[] Phi, bool Single, bool? RootIsLiquid) PhiOfM(double[] xx, bool liq)
+        {
+            var rr = ZAndPhi(pPa, tK, aij, a, b, xx, liq);
+            if (liq && gammaOfX != null)
+            {
+                var g = gammaOfX(xx);
+                for (int i = 0; i < n; i++) rr.phi[i] *= g[i];
+            }
+            return rr;
+        }
+        // R17 (фикс v31): stability-границы ДО итераций (только классика). R19.6: при wsMode
+        // stability-тест Мичельсена (TPD, multi-start) заменяет Try-границы: корректное
+        // определение однофазности + K-инициализация от стабильности-пробы.
+        if (!wsMode)
+        {
+            double? pBubB = TryBubbleBound(aij, a, b, z, tK, tc, pc, om, gammaOfX);
+            if (pBubB is double pb && pPa >= pb)
+                { var (r0, w0) = OnePhaseResult(names, mw, z, aij, a, b, tK, pPa, kij, liquid: true, tc, pc, om); r0["flash_solver_used"] = solverUsed; r0["flash_solver_mode"] = solverModeOut; r0["flash_beta"] = 0.0; return (r0, w0, 0.0, null, null, 0.0, 0.0); }   // R22.1: мета-поля
+            double? pDewB = TryDewBound(aij, a, b, z, tK, gammaOfX);
+            if (pDewB is double pd && pPa <= pd)
+                { var (r0, w0) = OnePhaseResult(names, mw, z, aij, a, b, tK, pPa, kij, liquid: false, tc, pc, om); r0["flash_solver_used"] = solverUsed; r0["flash_solver_mode"] = solverModeOut; r0["flash_beta"] = 1.0; return (r0, w0, 1.0, null, null, 0.0, 0.0); }   // R22.1: мета-поля
+        }
+
+        double beta = double.NaN;
+        var x = new double[n]; var y = new double[n];
+        bool converged = false;
+        bool llSuspected = false; string? mNote = null;
+        double[] K = new double[n];
+        if (michelsenWanted)
+        {
+            // R19.6: Мичельсен — stability-тест TPD (multi-start: чистые компоненты, равномерный,
+            // z-обогащённые) + SS с демпфированием; K-инициализация от стабильности-пробы;
+            // single-корни при RR-составах НЕ прерывают (φ вычислимы — демпфирование страхует).
+            // R22.1: путь работает и для прямого solver=michelsen/auto (не только wsMode); γ-φ — через PhiOfM.
+            var mres = MichelsenFlash.Solve(PhiOfM, z, tK, pPa, tc, pc, om, tpdCorrect);
+            // R29 (A9): tpdL=null даёт (NaN, null, null) — NaN-сравнения ниже оба false → mres.X! → NRE.
+            if (!double.IsFinite(mres.Beta))
+                throw new ValidationException("Мичельсен (R19.6): flash не выполнен — TPD-тест не дал конечного корня (φ не вычислимы при пробах). Проверьте состав (нулевые/вырожденные доли) и физическую область P/T.");
+            if (mres.Beta <= 1e-9)
+            {
+                var (r0, w0) = OnePhaseResult(names, mw, z, aij, a, b, tK, pPa, kij, liquid: true, tc, pc, om);
+                w0.Add(mres.Note);
+                r0["flash_solver_used"] = solverUsed;
+                r0["flash_solver_mode"] = solverModeOut;
+                r0["flash_beta"] = 0.0;
+                return (r0, w0, 0.0, null, null, 0.0, 0.0);
+            }
+            if (mres.Beta >= 1.0 - 1e-9)
+            {
+                var (r0, w0) = OnePhaseResult(names, mw, z, aij, a, b, tK, pPa, kij, liquid: false, tc, pc, om);
+                w0.Add(mres.Note);
+                r0["flash_solver_used"] = solverUsed;
+                r0["flash_solver_mode"] = solverModeOut;
+                r0["flash_beta"] = 1.0;
+                return (r0, w0, 1.0, null, null, 0.0, 0.0);
+            }
+            beta = mres.Beta;
+            for (int i = 0; i < n; i++) { x[i] = mres.X![i]; y[i] = mres.Y![i]; }
+            converged = mres.Converged;
+            llSuspected = mres.LlSuspected;
+            mNote = mres.Note;
+            var (_, pLm, _, _) = PhiOfM(x, true);
+            var (_, pVm, _, _) = PhiOfM(y, false);
+            for (int i = 0; i < n; i++) K[i] = pLm[i] / Math.Max(pVm[i], 1e-12);
+        }
+        else
+        {
+        // стартовые K — по Wilson (надёжная оценка для бисекции RR) — классика (эталоны R17–R19.5)
+        for (int i = 0; i < n; i++) K[i] = Math.Max(1e-8, WilsonPsat(tc[i], pc[i], om[i], tK) / pPa);
+        for (int outer = 0; outer < 60; outer++)
+        {
+            // Рачфорд–Райс: f(β) = Σ z·(K−1)/(1+β(K−1)) = 0, β ∈ (0,1)
+            double f0 = 0, f1 = 0;
+            for (int i = 0; i < n; i++) { double d = K[i] - 1.0; f0 += z[i] * d; f1 += z[i] * d / K[i]; }
+            if (!wsMode)
+            {
+                if (f0 <= 0) { beta = 0.0; break; }          // однофазная жидкость (P выше P пузырька)
+                if (f1 >= 0) { beta = 1.0; break; }          // однофазный пар (P ниже P росы)
+            }
+            // R19.5: при GE-переносе Wilson-K ненадёжен (GE не входит в Wilson) — early-exit по f0/f1
+            // может подменить двухфазный ответ однофазным. Try-границы (выше) уже гарантируют
+            // двухфазную область при wsMode — f0/f1-выходы там не делаются.
+            double blo = 0.0, bhi = 1.0;
+            for (int it = 0; it < 60; it++)
+            {
+                double bm = 0.5 * (blo + bhi);
+                double fv = 0;
+                for (int i = 0; i < n; i++) fv += z[i] * (K[i] - 1.0) / (1.0 + bm * (K[i] - 1.0));
+                if (fv > 0) blo = bm; else bhi = bm;
+            }
+            beta = 0.5 * (blo + bhi);
+            if (wsMode && (beta <= 1e-6 || beta >= 1.0 - 1e-6))
+            {
+                // R19.5: RR-корня нет при Wilson-K (f(β) одного знака) — при wsMode это артефакт
+                // старта, не физика (двухфазная область гарантирована Try-границами) — β клампится
+                // в (1e-6; 1−1e-6), флаг сходимости остаётся в руках K-обновления.
+                beta = Math.Clamp(beta, 1e-6, 1.0 - 1e-6);
+            }
+
+            // составы фаз
+            double sx = 0, sy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                x[i] = z[i] / (1.0 + beta * (K[i] - 1.0));
+                y[i] = K[i] * x[i];
+                sx += x[i]; sy += y[i];
+            }
+            for (int i = 0; i < n; i++) { x[i] /= sx; y[i] /= sy; }
+
+            // обновление K из фугазностей
+            var (_, pL, singleL, _) = ZAndPhi(pPa, tK, aij, a, b, x, liquid: true);
+            if (gammaOfX != null)   // R18.4e: NRTL-активности от x жидкой фазы
+            {
+                var g = gammaOfX(x);
+                for (int i = 0; i < n; i++) pL[i] *= g[i];
+            }
+            var (_, pV, singleV, _) = ZAndPhi(pPa, tK, aij, a, b, y, liquid: false);
+            if (wsMode && (singleL || singleV))
+            {
+                // R19.5: SS при GE-моделях неустойчив — single-корень при RR-составах (φ не определены);
+                // обновление K невозможно — прерываем с converged=false (честный отчёт; точный β — R19.6).
+                break;
+            }
+            double dMax = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double Kn = pL[i] / Math.Max(pV[i], 1e-12);
+                dMax = Math.Max(dMax, Math.Abs(Kn - K[i]) / Math.Max(K[i], 1e-8));
+                K[i] = Kn;
+            }
+            if (dMax < 1e-9) converged = true;   // K сошлись; β пересчитается на следующем проходе (фикс v31)
+        }
+        }   // R19.6: конец else (классический SS-путь)
+
+        var warns = new List<string>();
+        var result = new Dictionary<string, object?>();
+        result["calc_version"] = CalcMeta.Version;
+        result["kij_used"] = kij;
+        result["P_kPa"] = Math.Round(pPa / 1000.0, 2);
+        result["T_K"] = Math.Round(tK, 1);
+
+        if (beta <= 1e-9 || beta >= 1.0 - 1e-9)
+        {
+            bool liquidSide = beta <= 1e-9;
+            // R22.1 auto: нестабильность жидкой опоры однофазного ответа → Мичельсен (MinTpd-прокси, R21b)
+            if (autoMode && liquidSide)
+            {
+                var mProxy = MichelsenFlash.MinTpd((xx, liq) => ZAndPhi(pPa, tK, aij, a, b, xx, liq), z, liquidRef: true, probeLiquid: false);
+                if (mProxy is not null && mProxy.Value.Tpd < -1e-3)
+                {
+                    var (rM, wM, bM, xM, yM, zlM, zvM) = SolveFlashFull(names, tc, pc, om, mw, z, tK, pPa, kij, kijMatrix, gammaOfX, "michelsen", tpdCorrect, solverModeOut);
+                    wM.Add(string.Format("R22.1 auto: классика дала однофазный ответ с нестабильной жидкой опорой (min TPD = {0:0.###}) — переключено на Мичельсена (multi-start TPD + SS); принят min-G корень (R21b/R22.1).", mProxy.Value.Tpd));
+                    return (rM, wM, bM, xM, yM, zlM, zvM);
+                }
+            }
+            // R27 (C2): Peneloux на всех путях выхода (раньше michelsen-ветка вызывала без tc/pc/om)
+            { var (r1, w1) = OnePhaseResult(names, mw, z, aij, a, b, tK, pPa, kij, liquidSide, tc, pc, om); r1["flash_solver_used"] = solverUsed; r1["flash_solver_mode"] = solverModeOut; r1["flash_beta"] = liquidSide ? 0.0 : 1.0; return (r1, w1, liquidSide ? 0.0 : 1.0, null, null, 0.0, 0.0); }
+        }
+
+        // R22.1 auto: классический SS не сошёлся → Мичельсен (multi-start TPD + SS)
+        if (autoMode && !converged && !michelsenWanted)
+        {
+            var (rM, wM, bM, xM, yM, zlM, zvM) = SolveFlashFull(names, tc, pc, om, mw, z, tK, pPa, kij, kijMatrix, gammaOfX, "michelsen", tpdCorrect, solverModeOut);
+            wM.Add("R22.1 auto: классический SS не сошёлся — переключено на Мичельсена (multi-start TPD + SS); принят min-G корень.");
+            return (rM, wM, bM, xM, yM, zlM, zvM);
+        }
+        if (!converged)
+            warns.Add(wsMode
+                ? "PT-flash при WS не сошёлся (Мичельсен: multi-start TPD + демпфированный SS) — результат приблизительный."
+                : "PT-flash не сошёлся за 60 итераций K-обновления — результат приблизительный (близко к критической области?).");
+        if (llSuspected)
+            warns.Add("LL-детекция (R19.6, TPD-тест Мичельсена): жидкая фаза нестабильна — вероятно расщепление на две жидкие фазы; модель не учитывает LL-равновесие — результат может быть неточным.");
+        if (mNote is not null)
+            warns.Add(mNote);
+
+        var (zL, _, _, _) = ZAndPhi(pPa, tK, aij, a, b, x, liquid: true);
+        var (zV, _, _, _) = ZAndPhi(pPa, tK, aij, a, b, y, liquid: false);
+        double mwL = x.Zip(mw, (xi, m) => xi * m).Sum();
+        double mwVap = y.Zip(mw, (yi, m) => yi * m).Sum();
+        var (rhoLs, rhoLn) = PenelouxShift.Densities(mwL, zL, pPa, tK, PenelouxShift.MixC(x, tc, pc, om));
+        var (rhoVs, rhoVn) = PenelouxShift.Densities(mwVap, zV, pPa, tK, PenelouxShift.MixC(y, tc, pc, om));
+
+        result["vapor_fraction"] = Math.Round(beta, 6);
+        // R22.1: новые поля flash-контракта (старые vapor_fraction/x/y НЕ меняются)
+        result["flash_solver_used"] = solverUsed;
+        result["flash_solver_mode"] = solverModeOut;
+        result["flash_beta"] = Math.Round(beta, 6);
+        result["flash_x"] = x.Select((xi, i) => new { name = names[i], x = Math.Round(xi, 4) }).ToArray();
+        result["flash_y"] = y.Select((yi, i) => new { name = names[i], y = Math.Round(yi, 4) }).ToArray();
+        result["phase"] = "two-phase";
+        result["method"] = MethodLabel(wsMode
+            ? "PR EoS PT-flash (Wong–Sandler): Мичельсен — stability-тест TPD (multi-start) + демпфированный SS; K-инициализация от стабильности-пробы (R19.6)"
+            : "PR EoS PT-flash: Рачфорд–Райс по β + K-обновление из φL/φV до сходимости; stability-границы P_bub/P_dew проверены");
+        result["reference"] = "Rachford & Rice, J. Appl. Phys. 23, 1950; Peng & Robinson, 1976";
+        result["assumptions"] = AssumptionsWithWs(kijMatrix != null ? "k_ij — матрица per-pair (R17.2); значения — в предупреждениях (R19.1: типовой справочник или ручной ввод)"
+            : (kij == 0 ? "k_ij = 0" : string.Format("k_ij = {0:0.###} для всех пар", kij))).Concat(new[] { PenelouxShift.Assumption }).ToArray();
+        result["flash_converged"] = converged;
+        result["Z_liquid"] = Math.Round(zL, 4);
+        result["Z_vapor"] = Math.Round(zV, 4);
+        result["rho_liquid_kg_m3"] = Math.Round(rhoLs, 1);
+        result["rho_liquid_no_shift_kg_m3"] = Math.Round(rhoLn, 1);
+        result["rho_vapor_kg_m3"] = Math.Round(rhoVs, 2);
+        result["rho_vapor_no_shift_kg_m3"] = Math.Round(rhoVn, 2);
+        result["mw_liquid_g_mol"] = Math.Round(mwL, 2);
+        result["mw_vapor_g_mol"] = Math.Round(mwVap, 2);
+        result["y_vapor"] = y.Select((yi, i) => new { name = names[i], y = Math.Round(yi, 4) }).ToArray();
+        result["x_liquid"] = x.Select((xi, i) => new { name = names[i], x = Math.Round(xi, 4) }).ToArray();
+        result["K_values"] = K.Select((ki, i) => new { name = names[i], K = Math.Round(ki, 4) }).ToArray();
+        return (result, warns, beta, x, y, zL, zV);
+    }
+
+
+    // ---------- R17.2: P-H слой (энтальпии) ----------
+
+    // R17.2: идеальная энтальпия смеси Σ z_i·∫ Cp_ig,i dT (от 298.15 K; трапеции)
+    private static double HigJPerMol(double tK, double[] z, Func<double, double>?[] cpig, double tRef = 298.15)
+    {
+        if (Math.Abs(tK - tRef) < 1e-12) return 0.0;
+        double dir = Math.Sign(tK - tRef);
+        int steps = Math.Max(1, (int)Math.Ceiling(Math.Abs(tK - tRef)));
+        double h = 0, tPrev = tRef, cPrev = CpMix(tRef, z, cpig);
+        for (int s = 1; s <= steps; s++)
+        {
+            double t = tRef + dir * Math.Abs(tK - tRef) * s / steps;
+            double c = CpMix(t, z, cpig);
+            h += 0.5 * (cPrev + c) * (t - tPrev);
+            tPrev = t; cPrev = c;
+        }
+        return h;
+    }
+
+    private static double CpMix(double t, double[] z, Func<double, double>?[] cpig)
+    {
+        double s = 0;
+        for (int i = 0; i < z.Length; i++) s += z[i] * (cpig[i]?.Invoke(t) ?? 0.0);
+        return s;
+    }
+
+    // R17.2: a-смеси ΣΣ x_i·x_j·a_ij(T) — для численной da/dT
+    private static double Amix(double[] tc, double[] pc, double[] om, double[] xi, double tK, double kij, double[,]? kijOverride)
+    {
+        var (_, _, aij) = PrParams(tc, pc, om, tK, kij, kijOverride);
+        double am = 0;
+        for (int i = 0; i < xi.Length; i++)
+            for (int j = 0; j < xi.Length; j++)
+                am += xi[i] * xi[j] * aij[i, j];
+        return am;
+    }
+
+    // R17.2: PR-департура энтальпии (Smith–Van Ness):
+    // H_dep = R·T·(Z−1) + (a − T·da/dT)/(2√2·b)·ln[(Z+(1−√2)B)/(Z+(1+√2)B)]
+    // R18.4b — итог верификации департуры против thermo 0.6.1 PRMIX (CH4/C2H6 50/50, 15.11.2026):
+    //  · НИЖЕСТОЯЩАЯ формула верифицирована НАПРЯМУЮ: dep против eos.H_dep_l — ±0.02% на сетке
+    //    150–230 K (1–3 МПа); Cp_liquid положителен и согласован (+62…+69 Дж/(моль·К) при 150–180 K);
+    //  · R18.4a-«дефект жидкой ветви» — артефакт python-реплики сверки (порядок ln перепутан в реплике,
+    //    а не в коде); гипотеза Peneloux для плотности тоже снята (Z/ρ совпадают до 4-го знака);
+    //  · сверка «инверсии» R17.2.1 (10.9%) методологически ненадёжна (базис Hfs, фазовые ветки корней)
+    //    — перепроверка вынесена в каталог (R18.4c). Числовые эталоны dep — в R184BTests.
+    private static double HdepJPerMol(double pPa, double tK, double[] tc, double[] pc, double[] om, double[] xi,
+        double kij, double[,]? kijOverride, bool liquid)
+    {
+        var (a, b, aij) = PrParams(tc, pc, om, tK, kij, kijOverride);
+        double am = 0, bm = 0;
+        for (int i = 0; i < xi.Length; i++)
+        {
+            bm += xi[i] * b[i];
+            for (int j = 0; j < xi.Length; j++) am += xi[i] * xi[j] * aij[i, j];
+        }
+        double dAdT = Amix(tc, pc, om, xi, tK + 0.5, kij, kijOverride) - Amix(tc, pc, om, xi, tK - 0.5, kij, kijOverride);
+        var (zRoot, _, _, _) = ZAndPhi(pPa, tK, aij, a, b, xi, liquid);
+        double B = bm * pPa / (R * tK);
+        double logArg = (zRoot + (1.0 - Math.Sqrt(2.0)) * B) / (zRoot + (1.0 + Math.Sqrt(2.0)) * B);
+        return R * tK * (zRoot - 1.0) + (am - tK * dAdT) / (2.0 * Math.Sqrt(2.0) * bm) * Math.Log(logArg);
+    }
+
+    // R17.2: валидация k_ij-матрицы (квадратная n×n, симметрия, нулевая диагональ, [-0.5; 0.5])
+    private static void ValidateKijMatrix(double[,]? m, int n)
+    {
+        if (m is null) return;
+        if (m.GetLength(0) != n || m.GetLength(1) != n)
+            throw new ValidationException("k_ij-матрица должна быть n×n по числу компонентов.");
+        for (int i = 0; i < n; i++)
+        {
+            if (m[i, i] != 0.0) throw new ValidationException("Диагональ k_ij-матрицы должна быть нулевой (k_ii не существует).");
+            for (int j = 0; j < n; j++)
+            {
+                if (m[i, j] != m[j, i]) throw new ValidationException("k_ij-матрица должна быть симметричной.");
+                if (m[i, j] < -0.5 || m[i, j] > 0.5)
+                    throw new ValidationException("k_ij в матрице вне [-0.5; 0.5].");
+            }
+        }
+    }
+
+    // R17.2: энтальпия смеси при заданных T, P — mode="enthalpy" (прямая задача)
+    public static (Dictionary<string, object?> result, List<string> warns) SolveEnthalpy(
+        string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double tK, double pPa,
+        double kij, double[,]? kijMatrix, Func<double, double>?[] cpig, Func<double[], double[]>? gammaOfX = null,
+        string solver = "classic", bool tpdCorrect = false)   // R27 (A6/Р4)
+    {
+        int n = tc.Length;
+        if (cpig is null || cpig.Length != n || cpig.Any(c => c is null))
+            throw new ValidationException("PH-слой: нужны Cp_ig(T) для каждого компонента (точки Cp газ).");
+        ValidateKijMatrix(kijMatrix, n);
+        double hIG, hDep, betaOut;
+        string phase;
+        var warns = new List<string>();
+        // R31 (4.1, R30-ревью): явная проверка сверхкритичности ДО SolveFlashFull. Прежний
+        // catch(ValidationException) глотал честный отказ Мичельсена (R29 A9) и выдавал
+        // фальшивый «однофазный пар при T>Tc»; теперь настоящий отказ поднимается наверх.
+        if (tK >= tc.Max())
+        {
+            // T ≥ max(Tc): пар однофазный
+            phase = "vapor";
+            betaOut = 1.0;
+            hDep = HdepJPerMol(pPa, tK, tc, pc, om, z, kij, kijMatrix, liquid: false);
+            warns.Add($"T выше Tcrit наименее летучего компонента — однофазный пар (департура от паровой ветки).");
+        }
+        else
+        {
+            var (fr, fw, beta, x, y, _, _) = SolveFlashFull(names, tc, pc, om, mw, z, tK, pPa, kij, kijMatrix, gammaOfX, solver, tpdCorrect);   // R27 (A6)
+            warns.AddRange(fw);
+            phase = Convert.ToString(fr["phase"])!;
+            betaOut = beta;
+            if (phase == "two-phase")
+            {
+                hDep = (1.0 - beta) * HdepJPerMol(pPa, tK, tc, pc, om, x!, kij, kijMatrix, liquid: true)
+                     + beta * HdepJPerMol(pPa, tK, tc, pc, om, y!, kij, kijMatrix, liquid: false);
+            }
+            else if (phase == "liquid")
+            {
+                // R18.4b: предупреждение департуры снято — прямая сверка с thermo 0.6.1 дала ±0.02%
+                // на сетке 150–230 K (прошлый текст «до ~10%» — следствие ошибок сверки, не кода)
+                hDep = HdepJPerMol(pPa, tK, tc, pc, om, z, kij, kijMatrix, liquid: true);
+            }
+            else hDep = HdepJPerMol(pPa, tK, tc, pc, om, z, kij, kijMatrix, liquid: false);
+        }
+        hIG = HigJPerMol(tK, z, cpig);
+        double h = hIG + hDep;
+        double mwMix = z.Zip(mw, (zi, m) => zi * m).Sum();
+        var result = new Dictionary<string, object?>
+        {
+            ["enthalpy_ig_JPerMol"] = Math.Round(hIG, 3),
+            ["enthalpy_dep_JPerMol"] = Math.Round(hDep, 3),
+            ["enthalpy_JPerMol"] = Math.Round(h, 3),
+            ["enthalpy_JPerKg"] = Math.Round(h / mwMix * 1000.0, 2),
+            ["enthalpy_ref_T_K"] = 298.15,
+            ["phase"] = phase,
+            ["T_K"] = Math.Round(tK, 1),
+            ["P_kPa"] = Math.Round(pPa / 1000.0, 2),
+            ["calc_version"] = CalcMeta.Version,
+            ["kij_used"] = kij,
+            ["method"] = "Энтальпия: h = Σ z_i·∫Cp_ig,i dT (от 298.15 K) + PR-департура (Smith–Van Ness); двухфазная — смесь фазовых департур по β",
+            ["reference"] = "Smith, Van Ness, Abbott — Intro. Chem. Eng. Thermodynamics; Peng & Robinson, 1976",
+            ["assumptions"] = new[] { "Cp_ig — из справочника (константы/точки): при сильном отклонении от 298.15 K погрешность ig-части растёт (департура при этом верифицирована напрямую против thermo 0.6.1, ±0.02%, сетка R18.4c); da/dT численно (шаг 0.5 K)" },
+        };
+        if (phase == "two-phase") result["vapor_fraction"] = betaOut;
+        // R27 (C4-сентинел, решение владельца): ни один non-finite не уезжает в JSON как число.
+        var (cleanRes, nonFiniteKeys) = ResultSentinel.Sanitize(result);
+        if (nonFiniteKeys.Count > 0)
+            warns.Add("R27 (C4): значения " + string.Join(", ", nonFiniteKeys.Take(5)) + (nonFiniteKeys.Count > 5 ? $" (+{nonFiniteKeys.Count - 5})" : "") + " не вычислены (non-finite) — выданы как null, а не как числа.");
+        return (cleanRes, warns);
+
+    }
+
+    // R17.2: PH-flash: заданы P и мольная энтальпия — найти T и фазовое состояние (mode="ph")
+    public static (Dictionary<string, object?> result, List<string> warns) SolveEnthalpyFlash(
+        string[] names, double[] tc, double[] pc, double[] om, double[] mw, double[] z, double pPa,
+        double hTargetJPerMol, double kij, double[,]? kijMatrix, Func<double, double>?[] cpig, Func<double[], double[]>? gammaOfX = null,
+        string solver = "classic", bool tpdCorrect = false)   // R27 (A6/Р4): политика solver — Р4, дефолт сохранён
+    {
+        int n = tc.Length;
+        if (cpig is null || cpig.Length != n || cpig.Any(c => c is null))
+            throw new ValidationException("PH-flash: нужны Cp_ig(T) для каждого компонента (точки Cp газ).");
+        ValidateKijMatrix(kijMatrix, n);
+        double tLo = Math.Max(30.0, 0.2 * tc.Min());
+        double tHi = tc.Max() + 250.0;
+        double FullH(double t)
+        {
+            double hIG = HigJPerMol(t, z, cpig);
+            // R31 (4.1, R30-ревью): явная сверхкритичность вместо catch(ValidationException) —
+            // отказы Мичельсена (R29 A9) при t < max(Tc) больше не маскируются «паром».
+            if (t >= tc.Max()) return hIG + HdepJPerMol(pPa, t, tc, pc, om, z, kij, kijMatrix, liquid: false);
+            var (fr, _, beta, x, y, _, _) = SolveFlashFull(names, tc, pc, om, mw, z, t, pPa, kij, kijMatrix, gammaOfX);
+            string kind = Convert.ToString(fr["phase"])!;
+            if (kind == "two-phase")
+                return hIG + (1.0 - beta) * HdepJPerMol(pPa, t, tc, pc, om, x!, kij, kijMatrix, liquid: true)
+                             + beta * HdepJPerMol(pPa, t, tc, pc, om, y!, kij, kijMatrix, liquid: false);
+            if (kind == "liquid") return hIG + HdepJPerMol(pPa, t, tc, pc, om, z, kij, kijMatrix, liquid: true);
+            return hIG + HdepJPerMol(pPa, t, tc, pc, om, z, kij, kijMatrix, liquid: false);
+        }
+        double fLo = FullH(tLo) - hTargetJPerMol, fHi = FullH(tHi) - hTargetJPerMol;
+        if (fLo > 0.0 || fHi < 0.0)
+        {
+            double tEdge = fLo > 0.0 ? tLo : tHi;
+            var (rEx, wEx, _, _, _, _, _) = SolveFlashFull(names, tc, pc, om, mw, z, tEdge, pPa, kij, kijMatrix, gammaOfX, solver, tpdCorrect);   // R27 (A6)
+            wEx.Add("Целевая энтальпия вне достоверного диапазона Cp_ig — возвращена граничная температура (экстраполяция).");
+            rEx["h_target_JPerMol"] = Math.Round(hTargetJPerMol, 3);
+            rEx["calc_version"] = CalcMeta.Version;
+            rEx["kij_used"] = kij;
+            return (rEx, wEx);
+        }
+        double lo = tLo, hi = tHi;
+        for (int it = 0; it < 90; it++)
+        {
+            double mid = 0.5 * (lo + hi);
+            if (FullH(mid) < hTargetJPerMol) lo = mid; else hi = mid;
+        }
+        double tSolve = 0.5 * (lo + hi);
+        // R27 (A6): финальный вызов РАНЬШЕ терял gammaOfX — температура найдена с γ-моделью,
+        // а составы фаз/плотности в ответе считались без неё. solver/tpdCorrect — явно (Р4: политика).
+        var (fr2, warns2, _, _, _, _, _) = SolveFlashFull(names, tc, pc, om, mw, z, tSolve, pPa, kij, kijMatrix, gammaOfX, solver, tpdCorrect);
+        // R18.4b: liquid-предупреждение департуры снято (прямая сверка dep против thermo — ±0.02%)
+        fr2["h_target_JPerMol"] = Math.Round(hTargetJPerMol, 3);
+        fr2["h_residual_JPerMol"] = Math.Round(FullH(tSolve) - hTargetJPerMol, 4);
+        fr2["calc_version"] = CalcMeta.Version;
+        fr2["kij_used"] = kij;
+        fr2["method"] = "PR EoS PH-flash: бисекция по T на монотонной h(T,P) = Σ z_i·∫Cp_ig,i dT + (1−β)·dep_L(x) + β·dep_V(y); PT-flash внутри";
+        fr2["reference"] = "Smith, Van Ness, Abbott — Intro. Chem. Eng. Thermodynamics; Rachford & Rice, 1950; Peng & Robinson, 1976";
+        fr2["assumptions"] = new[] { "Cp_ig — из таблиц точек веществ (PCHIP); департура PR без объёмного сдвига (Peneloux); энтальпия отсчитана от 298.15 K" };
+        return (fr2, warns2);
+    }
+
+    // R17: единая однофазная ветка flash (жидкость или пар при z)
+    private static (Dictionary<string, object?>, List<string>) OnePhaseResult(
+        string[] names, double[] mw, double[] z, double[,] aij, double[] a, double[] b, double tK, double pPa, double kij, bool liquid,
+        double[]? tc = null, double[]? pc = null, double[]? om = null)
+    {
+        var (zPh, _, _, _) = ZAndPhi(pPa, tK, aij, a, b, z, liquid: liquid);
+        double mwMix = z.Zip(mw, (zi, m) => zi * m).Sum();
+        var (rho, rhoNo) = (tc is null || pc is null || om is null)
+            ? (mwMix * pPa / (zPh * R * tK) / 1000.0, mwMix * pPa / (zPh * R * tK) / 1000.0)
+            : PenelouxShift.Densities(mwMix, zPh, pPa, tK, PenelouxShift.MixC(z, tc, pc, om));
+        var result = new Dictionary<string, object?>
+        {
+            ["vapor_fraction"] = liquid ? 0.0 : 1.0,
+            ["phase"] = liquid ? "liquid" : "vapor",
+            ["P_kPa"] = Math.Round(pPa / 1000.0, 2),
+            ["T_K"] = Math.Round(tK, 1),
+            ["method"] = MethodLabel("PR EoS PT-flash (Рачфорд–Райс): однофазное состояние (проверено stability-границами P_bub/P_dew)"),
+            ["reference"] = "Rachford & Rice, J. Appl. Phys. 23, 1950; Peng & Robinson, 1976",
+            ["assumptions"] = AssumptionsWithWs(kij == 0 ? "k_ij = 0" : string.Format("k_ij = {0:0.###} для всех пар", kij)).Concat(new[] { PenelouxShift.Assumption }).ToArray(),
+            ["calc_version"] = CalcMeta.Version,
+            ["kij_used"] = kij,
+            ["Z_phase"] = Math.Round(zPh, 4),
+            ["rho_phase_kg_m3"] = Math.Round(rho, 2),
+            ["rho_phase_no_shift_kg_m3"] = Math.Round(rhoNo, 2),
+        };
+        var warns = new List<string>();
+        if (liquid) warns.Add("P выше давления пузырька — однофазная жидкость (β=0); используйте mode=bubble, чтобы найти давление пузырька при этом T.");
+        else warns.Add("P ниже давления росы — однофазный пар (β=1); используйте mode=dew, чтобы найти давление росы при этом T.");
+        return (result, warns);
+    }
+
+    // R17.2 (С1-в, решение владельца 16.11): dP/dV на жидком корне PR-изотермы.
+    // P(V) = RT/(V - bm) - am/(V^2 + 2*bm*V - bm^2); dP/dV = -RT/(V-bm)^2 + am*(2V+2bm)/(V^2+2bmV-bm^2)^2.
+    // > 0 — жидкая ветка механически нестабильна (спинодальная зона): найденный «bubble» может быть
+    // границей ветки, а не равновесием. am — смесевые по составу z (aij уже содержит 1-k_ij).
+    private static double SpinodalDpdv(double[,] aij, double[] a, double[] b, double[] z, double tK, double zL, double pPa)
+    {
+        if (!double.IsFinite(zL) || zL <= 0 || pPa <= 0) return double.NaN;
+        int n = z.Length;
+        double am = 0, bm = 0;
+        for (int i = 0; i < n; i++)
+        {
+            bm += z[i] * b[i];
+            for (int j = 0; j < n; j++) am += z[i] * z[j] * aij[i, j];
+        }
+        double RT = 8.31446261815324 * tK;
+        double V = zL * RT / pPa;
+        double d = V * V + 2 * bm * V - bm * bm;
+        double dv = V - bm;
+        if (d <= 0 || Math.Abs(dv) < 1e-24) return double.NaN;
+        return -RT / (dv * dv) + am * (2 * V + 2 * bm) / (d * d);
+    }
+
+    // R17: давление пузырька без исключений (для stability-чека flash); null — корня нет
+    private static double? TryBubbleBound(double[,] aij, double[] a, double[] b, double[] z, double tK, double[] tc, double[] pc, double[] om,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        int n = z.Length;
+        double pw = 0;
+        for (int i = 0; i < n; i++) pw += z[i] * WilsonPsat(tc[i], pc[i], om[i], tK);
+        if (pw <= 0) pw = 1e5;
+        double lo = 1e2, hi = pw * 3;
+        var yBuf = new double[n];
+        var (sLo, okLo, _) = SumK(lo, tK, aij, a, b, z, yBuf, gammaOfX);
+        var (sHi, okHi, _) = SumK(hi, tK, aij, a, b, z, yBuf, gammaOfX);
+        if (okLo && okHi && Math.Sign(sLo - 1.0) == Math.Sign(sHi - 1.0)) return null;
+        for (int iter = 0; iter < 80; iter++)
+        {
+            double mid = (lo + hi) / 2;
+            var (S, ok, dir) = SumK(mid, tK, aij, a, b, z, yBuf, gammaOfX);
+            if (!ok) { if (dir > 0) lo = mid; else hi = mid; }
+            else if (S > 1.0) lo = mid; else hi = mid;
+        }
+        return lo;
+    }
+
+    // R17: давление росы без исключений (для stability-чека flash); null — корня нет
+    private static double? TryDewBound(double[,] aij, double[] a, double[] b, double[] z, double tK,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        double prevP = 1.0, prevS = double.NaN, pLo = 0.0;
+        for (int step = 0; step < 70; step++)
+        {
+            double p = prevP * 2.5;
+            var (S, _) = SumKdew(p, tK, aij, a, b, z, gammaOfX);
+            if (double.IsFinite(prevS) && double.IsFinite(S) && Math.Sign(S - 1.0) != Math.Sign(prevS - 1.0))
+            { pLo = prevP; break; }
+            prevP = p; prevS = S;
+        }
+        if (pLo == 0.0) return null;
+        double lo = pLo, hi = prevP, sLoVal = prevS;
+        for (int iter = 0; iter < 90; iter++)
+        {
+            double mid = Math.Sqrt(lo * hi);
+            var (S, _) = SumKdew(mid, tK, aij, a, b, z, gammaOfX);
+            if (double.IsNaN(S)) { hi = mid; continue; }
+            if ((S - 1.0) * (sLoVal - 1.0) < 0) hi = mid; else { lo = mid; sLoVal = S; }
+        }
+        return Math.Sqrt(lo * hi);
+    }
+
+    // R20-шаг 1: stability-бисекция по P (диагностический путь): граница фазовой стабильности
+    // по знаку min TPD опоры. liquidRef=true: жидкая опора — стабильно при P ≥ P_bub;
+    // liquidRef=false: паровая опора — стабильно при P ≤ P_dew. null — границы в вилке нет.
+    // R20-шаг 2: возвращает (граница стабильности по знаку min TPD, флаг «жидкая ветка не существует»).
+    // Факт диагностики: при single-опоре во всей вилке PR-изотерма однофазная (disc>=0) —
+    // двухфазной области по модели нет (кейс N2/CO2 @250); «TPD≈0» там тривиально (опора пароподобна).
+    private static (double? P, bool NoLiquidBranch) StabilityBisectP(double[,] aij, double[] a, double[] b, double[] z, double tK, double[] tc, double[] pc, double[] om, bool liquidRef)
+    {
+        double TpdAt(double p)
+        {
+            var m = MichelsenFlash.MinTpd((xx, liq) => ZAndPhi(p, tK, aij, a, b, xx, liq), z, liquidRef, probeLiquid: !liquidRef);
+            return m is null ? double.NaN : m.Value.Tpd;
+        }
+        double pw = 0;
+        for (int i = 0; i < z.Length; i++) pw += z[i] * WilsonPsat(tc[i], pc[i], om[i], tK);
+        if (pw <= 0) pw = 1e5;
+        bool anyLiquidBranch = false;
+        if (liquidRef)
+        {
+            double pPrev = pw * 3;
+            double tPrev = TpdAt(pPrev);
+            if (!double.IsFinite(tPrev)) return (null, false);
+            if (tPrev < 0) return (null, false);   // нестабильна даже при pw*3 — границы в вилке нет
+            for (int k = 1; k <= 30; k++)
+            {
+                double p = pPrev / Math.Pow(1.6, k);
+                if (p <= 1e2) break;
+                var (_, _, singleL, _) = ZAndPhi(p, tK, aij, a, b, z, liquid: true);
+                if (!singleL) anyLiquidBranch = true;
+                double t = TpdAt(p);
+                if (double.IsNaN(t)) continue;
+                if (t < 0)
+                {
+                    double a0 = p, b0 = pPrev;
+                    for (int it = 0; it < 40; it++)
+                    {
+                        double mid = Math.Sqrt(a0 * b0);
+                        double tm = TpdAt(mid);
+                        if (!double.IsFinite(tm)) { b0 = mid; continue; }
+                        if (tm < 0) a0 = mid; else b0 = mid;
+                    }
+                    return (Math.Sqrt(a0 * b0), false);
+                }
+                pPrev = p;
+            }
+            return (null, !anyLiquidBranch);   // стабильна во всей вилке; если жидкой ветки не было — модель однофазна
+        }
+        double pLo = 1e2;
+        double tLoV = TpdAt(pLo);
+        if (!double.IsFinite(tLoV)) return (null, false);
+        if (tLoV < 0) return (null, false);   // пар нестабилен уже при lo — граница вне вилки
+        for (int k = 1; k <= 30; k++)
+        {
+            double p = pLo * Math.Pow(1.6, k);
+            if (p >= pw * 3) break;
+            double t = TpdAt(p);
+            if (double.IsNaN(t)) continue;
+            if (t < 0)
+            {
+                double a0 = pLo, b0 = p;
+                for (int it = 0; it < 40; it++)
+                {
+                    double mid = Math.Sqrt(a0 * b0);
+                    double tm = TpdAt(mid);
+                    if (!double.IsFinite(tm)) { a0 = mid; continue; }
+                    if (tm < 0) b0 = mid; else a0 = mid;
+                }
+                return (Math.Sqrt(a0 * b0), false);
+            }
+            pLo = p;
+        }
+        return (null, false);
+    }
+
+    // R20-шаг 1: stability-бисекция по T (диагностика dew-T): пар-опора — стабильно при T ≥ T_dew.
+    private static double? StabilityBisectT(double pPa, double[] tc, double[] pc, double[] om, double[] z, double kij, double[,]? kijMatrix, double tLo, double tHi)
+    {
+        double TpdAt(double tt)
+        {
+            var (aM, bM, aijM) = PrParams(tc, pc, om, tt, kij, kijMatrix);
+            var m = MichelsenFlash.MinTpd((xx, liq) => ZAndPhi(pPa, tt, aijM, aM, bM, xx, liq), z, liquidRef: false, probeLiquid: true);
+            return m is null ? double.NaN : m.Value.Tpd;
+        }
+        double t0 = TpdAt(tLo), t1 = TpdAt(tHi);
+        if (!double.IsFinite(t0) || !double.IsFinite(t1)) return null;
+        if (t0 >= 0 || t1 < 0) return null;   // нет смены знака в диапазоне
+        double lo = tLo, hi = tHi;
+        for (int it = 0; it < 40; it++)
+        {
+            double mid = 0.5 * (lo + hi);
+            double tm = TpdAt(mid);
+            if (!double.IsFinite(tm)) { hi = mid; continue; }
+            if (tm < 0) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+    }
+
+    // R20-шаг 1: публичная обёртка для юнит-эталонов (граница стабильности PR без API).
+    public static double? StabilityBisectPressure(double[] tc, double[] pc, double[] om, double[] z, double tK, double kij, bool liquidRef)
+    {
+        var (a, b, aij) = PrParams(tc, pc, om, tK, kij, null);
+        return StabilityBisectP(aij, a, b, z, tK, tc, pc, om, liquidRef).P;
+    }
+
+    private static double WilsonPsat(double tc, double pc, double omega, double t)
+        => pc * Math.Exp(5.373 * (1 + omega) * (1 - tc / t));
+
+    // R19.5: method/assumptions-строки при активном GE-переносе (φ-φ WS)
+    private static string MethodLabel(string baseMethod)
+        => MixingContext.Current is null ? baseMethod
+           : baseMethod.Replace("Пенг-Робинсон", "Пенг-Робинсон + Wong–Sandler (φ-φ GE-перенос R19.5)")
+                       .Replace("PR EoS", "PR EoS + Wong–Sandler (φ-φ GE-перенос R19.5)");
+
+    private static string[] AssumptionsWithWs(string baseRow)
+    {
+        if (MixingContext.Current is null) return new[] { baseRow };
+        return new[] { baseRow, MixingContext.GeInVaporPhase
+            ? "φ-φ Wong–Sandler (R19.6, флаг сравнения): GE-перенос φ_i; G^E — от NRTL (τ заданы константами, T-зависимость τ не учтена); GE применяется к обеим фазам (R19.5-режим)"
+            : "φ-φ Wong–Sandler (R19.6): GE-перенос φ_i; G^E — от NRTL (τ заданы константами, T-зависимость τ не учтена); GE только в жидкой фазе, пар — классическое смешивание (решение владельца, КП2.1 19:19 15.11)" };
+    }
+
+    // R19.6b (в): скан соседних корней ΣzK=1 при wsMode — лог-сетка [P/3, 3P], 24 точки,
+    // бисекция каждого нового пересечения (до 2 корней). Найденный корень pBub исключается.
+    private static List<double> ScanExtraBubbleRoots(double pBub, double tK, double[,] aij, double[] a, double[] b, double[] z,
+        double[] yBuf, Func<double[], double[]>? gammaOfX)
+    {
+        var found = new List<double>();
+        double lo = pBub / 3.0, hi = pBub * 3.0;
+        double prevP = lo, prevS = double.NaN;
+        for (int k = 0; k <= 24; k++)
+        {
+            double p = lo * Math.Pow(hi / lo, k / 24.0);
+            var (S, ok, _) = SumK(p, tK, aij, a, b, z, yBuf, gammaOfX);
+            if (ok && double.IsFinite(S) && double.IsFinite(prevS) && (S - 1.0) * (prevS - 1.0) < 0)
+            {
+                double a0 = prevP, b0 = p, s0 = prevS;
+                for (int it = 0; it < 40; it++)
+                {
+                    double mid = 0.5 * (a0 + b0);
+                    var (Sm, okm, _) = SumK(mid, tK, aij, a, b, z, yBuf, gammaOfX);
+                    if (!okm) break;
+                    if ((Sm - 1.0) * (s0 - 1.0) < 0) b0 = mid; else { a0 = mid; s0 = Sm; }
+                }
+                double root = 0.5 * (a0 + b0);
+                if (Math.Abs(root - pBub) / pBub > 2e-3 && found.All(f => Math.Abs(f - root) / root > 5e-3))
+                    found.Add(root);
+            }
+            if (ok && double.IsFinite(S)) { prevP = p; prevS = S; }
+            if (found.Count >= 2) break;
+        }
+        return found;
+    }
+
+    private static (double S, bool ok, int dir) SumK(double p, double tK, double[,] aij, double[] a, double[] b, double[] z, double[] yBuf,
+        Func<double[], double[]>? gammaOfX = null)
+    {
+        int n = z.Length;
+        var (zL, phiL, singleL, rootIsL) = ZAndPhi(p, tK, aij, a, b, z, liquid: true);
+        if (gammaOfX != null)   // R18.4e: NRTL-активности жидкой фазы (x=z для bubble-критерия)
+        {
+            var g = gammaOfX(z);
+            for (int i = 0; i < n; i++) phiL[i] *= g[i];
+        }
+        // dir: −1 — однофазная жидкость (нужно повышать P → hi=mid); +1 — чистый пар (нужен lo=mid)
+        if (singleL) return (double.NaN, false, rootIsL == true ? -1 : +1);
+        // R18.4d: y-состав обновляется ДО СХОДИМОСТИ (симметрично SumKdew). Раньше y обновлялся
+        // один раз — на богатых метаном смесях при низких T это занижало P_bub до ~1.7% (R18.4c: C4).
+        // Полный цикл: φV(y) пересчитывается на каждой итерации до стабилизации y.
+        for (int i = 0; i < n; i++) yBuf[i] = z[i];
+        double S = double.NaN;
+        for (int iter = 0; iter < 45; iter++)
+        {
+            var (_, phiV, _, _) = ZAndPhi(p, tK, aij, a, b, yBuf, liquid: false);
+            S = 0; double sy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double zK = z[i] * (phiL[i] / Math.Max(phiV[i], 1e-12));
+                S += zK; yBuf[i] = zK; sy += zK;
+            }
+            if (sy <= 0 || !double.IsFinite(sy)) return (0, false, 0);
+            for (int i = 0; i < n; i++) yBuf[i] /= sy;
+        }
+        return (S, true, 0);
+    }
+
+    private static (double z, double[] phi, bool single, bool? rootIsLiquid) ZAndPhi(double p, double t, double[,] aij, double[] a, double[] b, double[] xi, bool liquid)
+    {
+        int n = xi.Length;
+        // R19.5: GE-перенос — при активном IMixingRule a_mix/b_mix берутся из правила смешивания
+        // (aij-параметры классики при этом игнорируются); φ_i — по обобщённой форме с производными.
+        var ruleMix = MixingContext.Current;
+        if (ruleMix is not null) MixingContext.SetVaporPhase(!liquid);   // R19.6: GE только от жидкой фазы (А2)
+        double am = 0, bm = 0;
+        if (ruleMix is null)
+        {
+            for (int i = 0; i < n; i++) bm += xi[i] * b[i];
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < n; j++)
+                    am += xi[i] * xi[j] * aij[i, j];
+        }
+        else
+        {
+            (am, bm) = ruleMix.Mix(xi, t);
+        }
+
+        double A = am * p / (R * R * t * t);
+        double B = bm * p / (R * t);
+
+        double c2 = -(1 - B);
+        double c1 = A - 3 * B * B - 2 * B;
+        double c0 = -(A * B - B * B - B * B * B);
+
+        double p3 = c1 - c2 * c2 / 3.0;
+        double q = 2 * c2 * c2 * c2 / 27.0 - c2 * c1 / 3.0 + c0;
+        double disc = q * q / 4 + p3 * p3 * p3 / 27.0;
+
+        double zL, zV;
+        bool single;
+        if (disc < 0)
+        {
+            double r = Math.Sqrt(-p3 * p3 * p3 / 27.0);
+            double phi3 = Math.Acos(Math.Clamp(-q / (2 * r), -1, 1)) / 3.0;
+            double m = 2 * Math.Sqrt(-p3 / 3.0);
+            double[] roots = new double[3];
+            for (int i = 0; i < 3; i++) roots[i] = m * Math.Cos(phi3 + 2 * Math.PI * i / 3) - c2 / 3.0;
+            var pos = roots.Where(rz => rz > B).ToArray();
+            if (pos.Length >= 2)
+            {
+                zL = pos.Min(); zV = pos.Max();
+                single = zV - zL < 1e-4;
+            }
+            else
+            {
+                zL = zV = pos.Length > 0 ? pos[0] : B + 1e-10;
+                single = true;
+            }
+        }
+        else
+        {
+            double sd = Math.Sqrt(disc);
+            double zReal = Math.Cbrt(-q / 2 + sd) + Math.Cbrt(-q / 2 - sd) - c2 / 3.0;
+            // R29 (D2): однокорневая ветка — кламп z > B (трёхкорневая ветка фильтрует roots>B).
+            // Прежде zReal ≤ B давало Log(z−B) = NaN в lnφ ниже — φ=NaN → источник NaN для BestTpd (A7).
+            zL = zV = Math.Max(Math.Max(1e-10, zReal), B + 1e-10);
+            single = true;
+        }
+
+        double z = liquid ? zL : zV;
+        bool? rootIsLiquid = single ? z < 0.5 : null;
+
+        var phi = new double[n];
+        double s2 = Math.Sqrt(2);
+        double lnTerm = Math.Log((z + (1 + s2) * B) / (z + (1 - s2) * B));
+        if (ruleMix is null)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                double aSumI = 0;
+                for (int j = 0; j < n; j++) aSumI += xi[j] * aij[i, j];
+                double biOverB = b[i] / bm;
+                double lnPhi = biOverB * (z - 1) - Math.Log(z - B)
+                    - A / (2 * s2 * B) * (2 * aSumI / am - biOverB) * lnTerm;
+                phi[i] = Math.Exp(lnPhi);
+            }
+        }
+        else
+        {
+            // R19.5: GE-перенос φ_i — обобщённая форма для произвольного правила смешивания:
+            // lnφ_i = (b_i^D/b_mix)(Z−1) − ln(Z−B) − (A/(2√2·B))·(a_i^D/a_mix + 1 − b_i^D/b_mix)·lnTerm
+            // с производными из MixingDerivs (численно; Эйлер-инвариант: Σx·a^D = a_mix, Σx·b^D = b_mix).
+            // При классике b_i^D = b_i и a_i^D = 2Σx_j a_ij − a_mix — алгебраическое совпадение с
+            // классической формулой выше (регрессия R17/R18-эталонов сохранена).
+            var (ad, bd) = MixingDerivs.Compute(ruleMix, xi, t);
+            for (int i = 0; i < n; i++)
+            {
+                double lnPhi = bd[i] / bm * (z - 1) - Math.Log(z - B)
+                    - A / (2 * s2 * B) * (ad[i] / am + 1.0 - bd[i] / bm) * lnTerm;
+                phi[i] = Math.Exp(lnPhi);
+            }
+        }
+        return (z, phi, single, rootIsLiquid);
+    }
+}
+
+========================================================================
+=== ФАЙЛ: src/TecHet.Api/Services/Calc/MixingInterfaces.cs ===
+namespace TecHet.Api.Services.Calc;
+
+using TecHet.Api.Errors;
+
+/// <summary>
+/// R19.4 (Спринт C): общий интерфейс моделей активностей (GE/γ) — NRTL / UNIQUAC / Wilson.
+/// Стратегия владельца: единый IActivityModel, чтобы GE-параметры одной модели переводились
+/// в φ-φ EOS (Wong–Sandler и далее MHV1/2). γ_i(x) — мольные коэффициенты активности.
+/// </summary>
+public interface IActivityModel
+{
+    /// <summary>"ideal" | "nrtl" | "uniquac" | ... — для трассируемости (method/assumptions).</summary>
+    string Name { get; }
+
+    /// <summary>Коэффициенты активности γ_i при мольном составе x.</summary>
+    double[] Gammas(double[] x);
+
+    /// <summary>
+    /// R19.7: γ при явной температуре — для моделей с T-зависимыми параметрами (UNIQUAC:
+    /// τ_ij = exp(A_ij + B_ij/T)). Дефолт — τ-константное поведение (NRTL: параметры без
+    /// T-зависимости, решение А3 — предупреждение о калибровочной T).
+    /// </summary>
+    double[] GammasAt(double[] x, double tK) => Gammas(x);
+}
+
+/// <summary>
+/// R19.4: интерфейс правил смешивания EOS (φ-φ). Mix возвращает (a_mix, b_mix) при составе x и T.
+/// Классика (vdW-1f): a_mix = ΣΣ x_i x_j a_ij; b_mix = Σ x_i b_i — текущее поведение PR (mix = null).
+/// Wong–Sandler (оригинал, 1992): b_mix = ΣΣ x_i x_j B_ij / (1 + G^E/(RT) − Σ x_i a_i/(b_i RT)),
+/// a_mix = b_mix·(Σ x_i a_i/b_i + RT·G^E/(RT)/Λ), где B_ij = (b_i+b_j)/2·(1−l_ij) − √(a_i a_j)(1−k_ij)/(RT),
+/// Λ_PR = −0.62323. Эквивалентно Λ-форме оригинала (Wong & Sandler, AIChE J. 38, 1992, eq. 13):
+/// a_mix/(b_mix·RT) = Σ x_i a_i/(b_i RT) + G^E/(RT·Λ). Вырождение в чистый компонент — точное
+/// (a_mix → a_i, b_mix → b_i). R19.5: знак GE-члена исправлен (было «+RT·G^E/0.62323» — усиливало
+/// когезию при G^E>0 — против физики переноса GE; см. CHANGELOG R19.5).
+/// </summary>
+public interface IMixingRule
+{
+    string Name { get; }
+
+    /// <summary>(a_mix, b_mix) при составе x (мольные доли) и температуре tK.</summary>
+    (double Am, double Bm) Mix(double[] x, double tK);
+}
+
+/// <summary>
+/// R19.4: контекст правила смешивания текущего расчёта (потокобезопасно: AsyncLocal
+/// наследуется через await, изолирован между параллельными запросами). По умолчанию — null
+/// = классическое правило vdW-1f (прежние эталоны не затрагиваются).
+/// </summary>
+public static class MixingContext
+{
+    private static readonly AsyncLocal<IMixingRule?> _current = new();
+    public static IMixingRule? Current => _current.Value;
+
+    // R19.6: текущая фаза (для GE-правила Wong–Sandler: GE только от жидкой фазы — решение
+    // владельца А2; флаг GeInVaporPhase включает R19.5-режим «GE в обеих фазах» для сравнения
+    // на эталонах). Устанавливается в ZAndPhi перед вычислением a_mix/b_mix.
+    private static readonly AsyncLocal<bool?> _vaporPhase = new();
+    private static readonly AsyncLocal<bool?> _geInVapor = new();
+    public static bool IsVaporPhase => _vaporPhase.Value ?? false;
+    public static void SetVaporPhase(bool vapor) => _vaporPhase.Value = vapor;
+    public static bool GeInVaporPhase => _geInVapor.Value ?? false;
+
+    /// <summary>Установить правило на область расчёта: using (MixingContext.Use(rule)) { ... }
+    /// R19.6: geInVapor — флаг сравнения (GE и в паровой фазе — R19.5-поведение).</summary>
+    public static IDisposable Use(IMixingRule? rule, bool geInVapor = false)
+    {
+        var prev = _current.Value;
+        var prevV = _vaporPhase.Value;
+        var prevG = _geInVapor.Value;
+        _current.Value = rule;
+        _geInVapor.Value = rule is null ? null : geInVapor;
+        return new Reset(prev, prevV, prevG);
+    }
+
+    private sealed class Reset : IDisposable
+    {
+        private readonly IMixingRule? _prev;
+        private readonly bool? _prevV;
+        private readonly bool? _prevG;
+        public Reset(IMixingRule? prev, bool? prevV, bool? prevG) { _prev = prev; _prevV = prevV; _prevG = prevG; }
+        public void Dispose()
+        {
+            _current.Value = _prev;
+            _vaporPhase.Value = _prevV;
+            _geInVapor.Value = _prevG;
+        }
+    }
+}
+
+/// <summary>R19.4: идеальная активность (γ = 1) — эталон совместимости.</summary>
+public sealed class IdealActivityModel : IActivityModel
+{
+    public static readonly IdealActivityModel Instance = new();
+    public string Name => "ideal";
+    public double[] Gammas(double[] x)
+    {
+        var g = new double[x.Length];
+        Array.Fill(g, 1.0);
+        return g;
+    }
+}
+
+/// <summary>
+/// R19.7: UNIQUAC (Abrams–Prausnitz, 1975) в общем интерфейсе. τ_ij = exp(A_ij + B_ij/T) — полная
+/// T-зависимость (ChemSep-форма; A_ij безразмерный, B_ij в K). r_i/q_i — Bondi-вклады (открытые
+/// таблицы; база thermo/ChemSep). Источник τ — ChemSep (permissive-лицензия; решение владельца Б8).
+/// </summary>
+public sealed class UniquacActivityModel : IActivityModel
+{
+    private readonly int _n;
+    private readonly double[] _r, _q;
+    private readonly double[,] _a, _b;
+    public UniquacActivityModel(int n, double[] r, double[] q, double[,] a, double[,] b)
+    { _n = n; _r = r; _q = q; _a = a; _b = b; }
+    public string Name => "uniquac";
+    public double[] Gammas(double[] x) => throw new ValidationException(
+        "UNIQUAC: γ без температуры не определены (τ_ij = exp(A_ij + B_ij/T) — T-зависимы); используйте GammasAt.");
+    public double[] GammasAt(double[] x, double tK) => UniquacService.Gammas(_n, x, _r, _q, _a, _b, tK);
+}
+
+/// <summary>
+/// R19.7b: UNIFAC (PSRK-набор, полная T-зависимость через Psi = exp(-a/T - b - c·T)) в общем
+/// интерфейсе — fallback-GE для пар без ChemSep-τ. Формулы/данные: UnifacService.
+/// </summary>
+public sealed class UnifacActivityModel : IActivityModel
+{
+    private readonly int _n;
+    private readonly int[][] _subIds, _counts;
+    public UnifacActivityModel(int n, int[][] subIds, int[][] counts)
+    { _n = n; _subIds = subIds; _counts = counts; }
+    public string Name => "unifac";
+    public double[] Gammas(double[] x) => throw new ValidationException(
+        "UNIFAC: γ без температуры не определены (Psi = exp(-a/T - b - c·T) — T-зависимы); используйте GammasAt.");
+    public double[] GammasAt(double[] x, double tK) => UnifacService.Gammas(_n, x, _subIds, _counts, tK);
+}
+
+/// <summary>R19.4: обёртка NRTL (Renon–Prausnitz) в общий интерфейс — поведение как NrtlService.Gammas.</summary>
+public sealed class NrtlActivityModel : IActivityModel
+{
+    private readonly int _n;
+    private readonly double[,] _tau;
+    private readonly double[,] _alpha;
+    public NrtlActivityModel(int n, double[,] tau, double[,] alpha) { _n = n; _tau = tau; _alpha = alpha; }
+    public string Name => "nrtl";
+    public double[] Gammas(double[] x) => NrtlService.Gammas(_n, x, _tau, _alpha);
+}
+
+/// <summary>R19.4: классическое правило смешивания (vdW-1f) — текущее поведение PR (эта же формула
+/// использовалась до R19.4 — эквивалентность проверяется тестом).</summary>
+public sealed class ClassicMixingRule : IMixingRule
+{
+    private readonly double[,] _aij;
+    private readonly double[] _b;
+    public ClassicMixingRule(double[,] aij, double[] b) { _aij = aij; _b = b; }
+    public string Name => "classic";
+    public (double Am, double Bm) Mix(double[] x, double tK)
+    {
+        double am = 0, bm = 0;
+        for (int i = 0; i < x.Length; i++)
+        {
+            bm += x[i] * _b[i];
+            for (int j = 0; j < x.Length; j++) am += x[i] * x[j] * _aij[i, j];
+        }
+        return (am, bm);
+    }
+}
+
+/// <summary>
+/// R19.4: Wong–Sandler (1992) — GE-mixing rule поверх Peng–Robinson (φ-φ). Оригинальная форма:
+///   B_ij = (b_i+b_j)/2·(1−l_ij) − √(a_i a_j)·(1−k_ij)/(R·T)
+///   b_mix = ΣΣ x_i x_j B_ij / (1 − Σ x_i a_i/(b_i·RT) − G^E/(Λ·RT))   (R31: оригинальная форма — R30)
+///   a_mix = b_mix·(Σ x_i a_i/b_i + G^E/0.62323),  Λ_PR = −0.62323
+/// G^E/(RT) = Σ x_i ln γ_i(x) — от IActivityModel (NRTL и далее UNIQUAC/Wilson).
+/// l_ij — параметр неидентичности размера (по практике = k_ij-матрица).
+/// φ_i при WS требует отдельного GE-переноса — этап R19.5; здесь — математика a_mix/b_mix.
+/// </summary>
+public sealed class WongSandlerMixingRule : IMixingRule
+{
+    public const double LambdaPr = -0.62323;   // Λ для Peng–Robinson (Wong–Sandler, 1992)
+
+    private readonly double[] _tc, _pc, _om;
+    private readonly double[,] _lMatrix;   // l_ij (неидентичность размера b)
+    private readonly double[,] _kijMatrix; // k_ij (взаимодействие a, для B_ij)
+    private readonly IActivityModel _ge;
+
+    public WongSandlerMixingRule(double[] tc, double[] pc, double[] om,
+        double[,] lMatrix, double[,] kijMatrix, IActivityModel ge)
+    {
+        _tc = tc; _pc = pc; _om = om;
+        _lMatrix = lMatrix; _kijMatrix = kijMatrix;
+        _ge = ge;
+    }
+
+    public string Name => "wong-sandler";
+
+    public (double Am, double Bm) Mix(double[] x, double tK)
+    {
+        int n = x.Length;
+        var (a, b) = PureParams(tK);
+        double geRt = 0;
+        // R19.6 (решение владельца А2): GE только от жидкой фазы; паровая фаза — классическое
+        // смешивание (WS-формула с G^E=0 — классический предел сохранён). Флаг GeInVaporPhase
+        // (MixtureInput.WsGeInVaporPhase) возвращает R19.5-режим «GE в обеих фазах» — сравнение
+        // на эталонах. Вне ZAndPhi (прямые вызовы Mix, юнит-эталоны производных) фаза не
+        // установлена — GE считается (совместимость с эталонами R19.4/R19.5).
+        bool useGe = !MixingContext.IsVaporPhase || MixingContext.GeInVaporPhase;
+        if (useGe)
+        {
+            // R19.7: γ при фактической T (UNIQUAC — T-зависимые τ; NRTL — дефолт τ-константные)
+            var gammas = _ge.GammasAt(x, tK);
+            for (int i = 0; i < n; i++) geRt += x[i] * Math.Log(gammas[i]);
+        }
+
+        double s2 = 0, aiBi = 0, sumAOverBRt = 0;
+        for (int i = 0; i < n; i++)
+        {
+            aiBi += x[i] * a[i] / b[i];
+            sumAOverBRt += x[i] * a[i] / (b[i] * R * tK);
+            for (int j = 0; j < n; j++)
+            {
+                double bij = 0.5 * (b[i] + b[j]) * (1.0 - _lMatrix[i, j]);
+                double Bij = bij - Math.Sqrt(a[i] * a[j]) * (1.0 - _kijMatrix[i, j]) / (R * tK);
+                s2 += x[i] * x[j] * Bij;
+            }
+        }
+        // R31 (R30-ревью, критично): инвариант b_mix − a_mix/(RT) ≡ ΣΣ x_i x_j B_ij требует
+        // знаменателя оригинальной WS-формы — коэфф. при G^E/(RT) равен −1/Λ = +1.60456, а не +1.
+        // Прежний «+geRt» нарушал инвариант (−4.16% на вода/этанол 343.15, реплика-арбитр).
+        double denom = 1.0 - sumAOverBRt - geRt / LambdaPr;
+        if (Math.Abs(denom) < 1e-12)
+            throw new ValidationException("Wong–Sandler: вырожденный знаменатель b_mix — проверьте состав и GE-параметры.");
+        double bm = s2 / denom;
+        // R19.5: Λ-форма — при G^E>0 (γ>1) перенос GE ослабляет когезию (P_bub выше классики —
+        // физика переноса GE). При классическом пределе (G^E=0) a_mix → b_mix·Σx_i a_i/b_i — точное
+        // вырождение сохранено (R19.4).
+        double am = bm * (aiBi + R * tK * geRt / LambdaPr);
+        return (am, bm);
+    }
+
+    // R19.5: кеш чистых a_i(T)/b_i — GE-перенос φ_i (MixingDerivs) вызывает Mix 2n раз на каждый
+    // ZAndPhi; без кеша PrParams пересчитывал бы a_ij-матрицу O(n²) на каждый вызов.
+    private double _cacheT = double.NaN;
+    private double[] _aCache = Array.Empty<double>();
+    private double[] _bCache = Array.Empty<double>();
+
+    private (double[] a, double[] b) PureParams(double tK)
+    {
+        if (_cacheT != tK)
+        {
+            var (a, b, _) = MixtureVleService.PrParams(_tc, _pc, _om, tK, 0.0, null);
+            _aCache = a; _bCache = b; _cacheT = tK;
+        }
+        return (_aCache, _bCache);
+    }
+
+    private const double R = 8.31446261815324;
+}
+
+/// <summary>
+/// R19.5: GE-перенос φ_i — производные (a_i^D, b_i^D) от произвольного IMixingRule по мольным числам.
+/// a_i^D = ∂(n·a_mix)/∂n_i при фиксированных прочих n_j (и T); b_i^D аналогично. Вычисляются численно
+/// (центральная разность ε=1e-6 по составу с нормировкой; при x_i − ε < 0 — односторонняя разность) —
+/// единообразно для любого правила смешивания. Формула φ_i (в PengRobinson.ZAndPhi):
+///   lnφ_i = (b_i^D/b_mix)(Z−1) − ln(Z−B) − (A/(2√2·B))·(a_i^D/a_mix + 1 − b_i^D/b_mix)·lnTerm.
+/// Фундаментальная сверка (python): lnφ_i = ∂(n·A^res/RT)/∂n_i − ln(Z) — совпадение ~1e-8 на классике
+/// и WS. Инвариант однородности (Эйлер): Σ x_i·a_i^D = a_mix, Σ x_i·b_i^D = b_mix.
+/// </summary>
+public static class MixingDerivs
+{
+    private const double Eps = 1e-6;
+
+    /// <summary>Производные (a_i^D, b_i^D) по мольным числам при прочих n_j const (T фикс.).</summary>
+    public static (double[] Ad, double[] Bd) Compute(IMixingRule rule, double[] x, double tK)
+    {
+        int n = x.Length;
+        var ad = new double[n];
+        var bd = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            double e = Eps * Math.Max(1.0, x[i]);
+            var xp = (double[])x.Clone(); xp[i] += e; Normalize(xp);
+            var (ap, bp) = rule.Mix(xp, tK);
+            double am2, bm2;
+            bool central = x[i] - e >= 0.0;
+            if (central)
+            {
+                var xm = (double[])x.Clone(); xm[i] -= e; Normalize(xm);
+                (am2, bm2) = rule.Mix(xm, tK);
+                ad[i] = ((1.0 + e) * ap - (1.0 - e) * am2) / (2.0 * e);
+                bd[i] = ((1.0 + e) * bp - (1.0 - e) * bm2) / (2.0 * e);
+            }
+            else
+            {
+                (am2, bm2) = rule.Mix(x, tK);   // F(n) при n без смещения — односторонняя разность
+                ad[i] = ((1.0 + e) * ap - am2) / e;
+                bd[i] = ((1.0 + e) * bp - bm2) / e;
+            }
+        }
+        return (ad, bd);
+    }
+
+    private static void Normalize(double[] x)
+    {
+        double s = 0;
+        for (int i = 0; i < x.Length; i++) s += x[i];
+        if (s > 0)
+            for (int i = 0; i < x.Length; i++) x[i] /= s;
+    }
+}
+
+========================================================================
+=== ФАЙЛ: tests/TecHet.Tests/R197Tests.cs ===
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using TecHet.Api.Services.Calc;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace TecHet.Tests;
+
+/// <summary>
+/// R19.7: UNIQUAC — юнит-эталоны γ (независимый эталон: библиотека thermo 0.6.1, слой 3 Б8-схемы),
+/// HTTP VLE вода/этанол (uniquac + Wong–Sandler), честный отказ при отсутствии r/q (Б8),
+/// assumptions-источники, LL-оговорка (С5). Эталонные числа — прогоны thermo (γ) и
+/// python-эталон WS+UNIQUAC (etalon_r197.py, bubble 67.204 кПа).
+/// </summary>
+public class R197Tests : IClassFixture<TecHetAppFactory>
+{
+    private readonly TecHetAppFactory _f;
+    public R197Tests(TecHetAppFactory f) { _f = f; }
+
+    private static string? _tokenCache;
+    private static readonly object _tokenLock = new();
+    private HttpClient Login()
+    {
+        var c = _f.CreateClient();
+        lock (_tokenLock)
+        {
+            if (_tokenCache is null)
+            {
+                HttpStatusCode st = HttpStatusCode.BadRequest;
+                for (int attempt = 0; attempt < 8; attempt++)
+                {
+                    var resp = c.PostAsJsonAsync("/api/auth/login", new { login = "budnikva2@yandex.ru", password = "1661" }).GetAwaiter().GetResult();
+                    st = resp.StatusCode;
+                    if (st == HttpStatusCode.OK)
+                    {
+                        _tokenCache = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult().GetProperty("token").GetString()!;
+                        break;
+                    }
+                    System.Threading.Thread.Sleep(2000);
+                }
+                Assert.Equal(HttpStatusCode.OK, st);
+            }
+        }
+        c.DefaultRequestHeaders.Authorization = new("Bearer", _tokenCache!);
+        return c;
+    }
+
+    private static int SubstanceId(HttpClient c, string name)
+    {
+        var json = c.GetAsync($"/api/substances?q={Uri.EscapeDataString(name)}&size=50").GetAwaiter().GetResult()
+            .Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        foreach (var it in json.GetProperty("items").EnumerateArray())
+        {
+            var nm = it.GetProperty("name").GetString() ?? "";
+            if (string.Equals(nm, name, StringComparison.OrdinalIgnoreCase))
+                return it.GetProperty("id").GetInt32();
+        }
+        return json.GetProperty("items").EnumerateArray().First().GetProperty("id").GetInt32();
+    }
+
+    private static (JsonElement result, JsonElement root) Post(HttpClient c, object body)
+    {
+        var resp = c.PostAsJsonAsync("/api/calc/mixture/vle", body).GetAwaiter().GetResult();
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var r = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        return (r.GetProperty("result"), r);
+    }
+
+    private static bool HasWarn(JsonElement root, string needle)
+    {
+        foreach (var it in root.GetProperty("warnings").EnumerateArray())
+            if (it.GetString()!.Contains(needle)) return true;
+        return false;
+    }
+
+    private static bool HasAssump(JsonElement result, string needle)
+    {
+        foreach (var it in result.GetProperty("assumptions").EnumerateArray())
+            if ((it.GetString() ?? "").Contains(needle)) return true;
+        return false;
+    }
+
+    // ---------- Юнит: γ-эталоны (термо-независимая сверка) ----------
+
+    [Fact]
+    public void Uniquac_Gammas_Thermo_Ethalons()
+    {
+        // thermo 0.6.1 UNIQUAC_gammas (вода/этанол, rs=[0.92, 2.5755], qs=[1.4, 2.588],
+        // τ = exp(A+B/T), ChemSep bij: вода→этанол −87.46005814161899; этанол→вода −55.288075960115854)
+        double[] rs = { 0.92, 2.5755 };
+        double[] qs = { 1.4, 2.588 };
+        double[,] a = { { 0.0, 0.0 }, { 0.0, 0.0 } };
+        double[,] b = { { 0.0, -87.46005814161899 }, { -55.288075960115854, 0.0 } };
+        var g = UniquacService.Gammas(2, new[] { 0.5, 0.5 }, rs, qs, a, b, 343.15);
+        Assert.InRange(g[0], 1.3885, 1.3935);   // thermo: 1.390923
+        Assert.InRange(g[1], 1.1530, 1.1578);   // thermo: 1.155361
+        var g2 = UniquacService.Gammas(2, new[] { 0.05, 0.95 }, rs, qs, a, b, 343.15);
+        Assert.InRange(g2[0], 1.9120, 1.9240);  // thermo: 1.917884
+        Assert.InRange(g2[1], 0.9990, 1.0030);  // thermo: 1.000784
+        var g3 = UniquacService.Gammas(2, new[] { 0.95, 0.05 }, rs, qs, a, b, 343.15);
+        Assert.InRange(g3[0], 1.0055, 1.0105);  // thermo: 1.007935
+        Assert.InRange(g3[1], 3.44, 3.49);      // thermo: 3.462407 (lnγ_e=1.2420)
+    }
+
+    [Fact]
+    public void Uniquac_Tau_TemperatureDependence()
+    {
+        // τ = exp(A+B/T): γ при T=373.15 отличается от T=343.15 (T-зависимость — отличие от NRTL)
+        double[] rs = { 0.92, 2.5755 };
+        double[] qs = { 1.4, 2.588 };
+        double[,] a = { { 0.0, 0.0 }, { 0.0, 0.0 } };
+        double[,] b = { { 0.0, -87.46005814161899 }, { -55.288075960115854, 0.0 } };
+        var g1 = UniquacService.Gammas(2, new[] { 0.5, 0.5 }, rs, qs, a, b, 343.15);
+        var g2 = UniquacService.Gammas(2, new[] { 0.5, 0.5 }, rs, qs, a, b, 373.15);
+        Assert.True(Math.Abs(g1[0] - g2[0]) > 1e-6, "τ-зависимость от T не проявилась");
+    }
+
+    // ---------- HTTP: вода/этанол UNIQUAC + WS ----------
+
+    [Fact]
+    public void Ws_Uniquac_Bubble_We()
+    {
+        // python-эталон etalon_r197.py (WS ge-liq-only + UNIQUAC ChemSep-τ): bubble 67.204 кПа
+        var c = Login();
+        int w = SubstanceId(c, "water"), et = SubstanceId(c, "ethanol");
+        var (result, root) = Post(c, new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.252 }, new { substanceId = et, molFrac = 0.748 } },
+            t = 343.15,
+            activityModel = "uniquac",
+            uniquacPairs = new[] { new { i = 0, j = 1, aIj = 0.0, bIj = -87.46005814161899, aJi = 0.0, bJi = -55.288075960115854 } },
+            mixingRule = "wong-sandler",
+        });
+        double pb = result.GetProperty("bubble_P_kPa").GetDouble();
+        Assert.InRange(pb, 66.5, 67.9);   // эталон 67.204 ±1%
+        Assert.True(HasWarn(root, "UNIQUAC"), "warnings: нет UNIQUAC-предупреждений");
+        Assert.True(HasWarn(root, "LL-растворимость"), "warnings: нет С5-оговорки о LL");
+        Assert.True(HasAssump(result, "ChemSep"), "assumptions: нет источника τ (ChemSep)");
+        Assert.True(HasAssump(result, "Bondi"), "assumptions: нет источника r/q (Bondi)");
+        Assert.True(HasWarn(root, "G^E — от UNIQUAC"), "warnings: GE-имя не UNIQUAC");
+    }
+
+    [Fact]
+    public void Uniquac_GammaPhi_Estimation()
+    {
+        // γ-φ (uniquac без WS) — А5-аналог: оценочный режим + assumption Peneloux + источники
+        var c = Login();
+        int w = SubstanceId(c, "water"), et = SubstanceId(c, "ethanol");
+        var (result, root) = Post(c, new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.252 }, new { substanceId = et, molFrac = 0.748 } },
+            t = 343.15,
+            activityModel = "uniquac",
+            uniquacPairs = new[] { new { i = 0, j = 1, aIj = 0.0, bIj = -87.46005814161899, aJi = 0.0, bJi = -55.288075960115854 } },
+        });
+        Assert.True(HasWarn(root, "ОЦЕНОЧНЫЙ режим"), "warnings: нет А5-предупреждения для UNIQUAC γ-φ");
+        Assert.True(HasWarn(root, "UNIQUAC"), "warnings: нет UNIQUAC-предупреждений");
+    }
+
+    [Fact]
+    public void Uniquac_MissingRq_HonestRefusal()
+    {
+        // Б8: источник неясен → честный отказ. R29 (A3): метан разложим по UNIFAC — теперь
+        // fallback (γ по UNIFAC), а не отказ; кейс отказа — вещество вне Bondi-таблицы И вне
+        // UNIFAC-разложений (аммиак: вне PSRK-набора и вне r/q-таблицы).
+        var c = Login();
+        int m = SubstanceId(c, "ammonia"), et = SubstanceId(c, "ethanol");
+        var resp = c.PostAsJsonAsync("/api/calc/mixture/vle", new
+        {
+            components = new[] { new { substanceId = m, molFrac = 0.5 }, new { substanceId = et, molFrac = 0.5 } },
+            t = 343.15,
+            activityModel = "uniquac",
+        }).GetAwaiter().GetResult();
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        var json = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        string err = json.GetProperty("error").GetString() ?? "";
+        Assert.Contains("расчёт невозможен", err);
+        Assert.Contains("ammonia", err);
+    }
+
+    [Fact]
+    public void Uniquac_NrtlPairs_Rejected()
+    {
+        var c = Login();
+        int w = SubstanceId(c, "water"), et = SubstanceId(c, "ethanol");
+        var resp = c.PostAsJsonAsync("/api/calc/mixture/vle", new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.5 }, new { substanceId = et, molFrac = 0.5 } },
+            t = 343.15,
+            activityModel = "uniquac",
+            nrtlPairs = new[] { new { i = 0, j = 1, tauIj = 1.0, tauJi = 1.0, alphaIj = 0.3 } },
+        }).GetAwaiter().GetResult();
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        var json = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        string err = json.GetProperty("error").GetString() ?? "";
+        Assert.Contains("uniquacPairs", err);
+    }
+
+    // ---------- R19.7b: UNIFAC-fallback ----------
+
+    private static (int[][], int[][]) Chems(params string[] names)
+    {
+        var ids = new int[names.Length][];
+        var cnts = new int[names.Length][];
+        for (int i = 0; i < names.Length; i++)
+        {
+            Assert.True(UnifacService.TryDecomp(names[i], out var g));
+            int len = g.Length / 2;
+            ids[i] = new int[len]; cnts[i] = new int[len];
+            for (int q = 0; q < len; q++) { ids[i][q] = g[2 * q]; cnts[i][q] = g[2 * q + 1]; }
+        }
+        return (ids, cnts);
+    }
+
+    [Fact]
+    public void Unifac_Gammas_Thermo_Ethalons()
+    {
+        // thermo 0.6.1 UNIFAC.from_subgroups(version=2, PSRK): γ вода/этанол @343.15
+        var (ids, cnts) = Chems("water", "ethanol");
+        var g = UnifacService.Gammas(2, new[] { 0.5, 0.5 }, ids, cnts, 343.15);
+        Assert.InRange(g[0], 1.487045 * 0.995, 1.487045 * 1.005);
+        Assert.InRange(g[1], 1.228478 * 0.995, 1.228478 * 1.005);
+        var g2 = UnifacService.Gammas(2, new[] { 0.05, 0.95 }, ids, cnts, 343.15);
+        Assert.InRange(g2[0], 2.520754 * 0.995, 2.520754 * 1.005);
+        Assert.InRange(g2[1], 1.002513 * 0.995, 1.002513 * 1.005);
+        var g3 = UnifacService.Gammas(2, new[] { 0.95, 0.05 }, ids, cnts, 343.15);
+        Assert.InRange(g3[0], 1.010247 * 0.995, 1.010247 * 1.005);
+        Assert.InRange(g3[1], 4.663933 * 0.995, 4.663933 * 1.005);
+    }
+
+    [Fact]
+    public void Unifac_Methane_Ethanol_Gammas()
+    {
+        // PSRK-газа CH4 — покрытие метана (Bondi-таблицы не имели r/q для метана)
+        var (ids, cnts) = Chems("methane", "ethanol");
+        var g = UnifacService.Gammas(2, new[] { 0.5, 0.5 }, ids, cnts, 343.15);
+        Assert.InRange(g[0], 1.271062 * 0.995, 1.271062 * 1.005);
+        Assert.InRange(g[1], 1.152928 * 0.995, 1.152928 * 1.005);
+    }
+
+    [Fact]
+    public void Ws_Unifac_Bubble_We_50_50()
+    {
+        // python-эталон (WS ge-liq-only + UNIFAC γ): bubble 62.560 кПа
+        var c = Login();
+        int w = SubstanceId(c, "water"), et = SubstanceId(c, "ethanol");
+        var (result, root) = Post(c, new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.5 }, new { substanceId = et, molFrac = 0.5 } },
+            t = 343.15,
+            activityModel = "unifac",
+            mixingRule = "wong-sandler",
+        });
+        double pb = result.GetProperty("bubble_P_kPa").GetDouble();
+        Assert.InRange(pb, 61.9, 63.2);   // эталон 62.560 ±1%
+        Assert.True(HasWarn(root, "ОЦЕНЕНЫ методом UNIFAC"), "warnings: нет пометки UNIFAC-оценки");
+        Assert.True(HasWarn(root, "G^E — от UNIFAC"), "warnings: GE-имя не UNIFAC");
+    }
+
+    [Fact]
+    public void Uniquac_NoPairs_Unifac_Fallback()
+    {
+        // вода/гексан uniquac+WS БЕЗ uniquacPairs → γ по UNIFAC (fallback), а не τ=1-идеальная
+        var c = Login();
+        int w = SubstanceId(c, "water"), hex = SubstanceId(c, "n-hexane");
+        var (result, root) = Post(c, new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.5 }, new { substanceId = hex, molFrac = 0.5 } },
+            t = 343.15,
+            mixingRule = "wong-sandler",
+            activityModel = "uniquac",
+        });
+        double pb = result.GetProperty("bubble_P_kPa").GetDouble();
+        // R29 (A3): fallback настоящий (γ по UNIFAC): факт R29 — 161.04 кПа (UNIFAC-γ воды
+        // сильно >1 — нерастворимая пара; прежний 66.28 был τ=1-симптомом перезаписи A3(а)).
+        Assert.InRange(pb, 155.0, 167.0);
+        Assert.True(HasWarn(root, "оценены методом UNIFAC"), "warnings: нет пометки fallback");
+    }
+
+    [Fact]
+    public void Uniquac_NonDecomposable_Rejects()
+    {
+        // ацетилен: не разложим по группам (не включён) и без r/q — честный отказ сохранён
+        var c = Login();
+        int w = SubstanceId(c, "water"), frac = SubstanceId(c, "acetylene");
+        var resp = c.PostAsJsonAsync("/api/calc/mixture/vle", new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.5 }, new { substanceId = frac, molFrac = 0.5 } },
+            t = 343.15,
+            mixingRule = "wong-sandler",
+            activityModel = "uniquac",
+        }).GetAwaiter().GetResult();
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        var json = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        string err = json.GetProperty("error").GetString() ?? "";
+        Assert.Contains("расчёт невозможен", err);
+    }
+
+    [Fact]
+    public void Unifac_UniquacPairs_Rejected()
+    {
+        var c = Login();
+        int w = SubstanceId(c, "water"), et = SubstanceId(c, "ethanol");
+        var resp = c.PostAsJsonAsync("/api/calc/mixture/vle", new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.5 }, new { substanceId = et, molFrac = 0.5 } },
+            t = 343.15,
+            activityModel = "unifac",
+            uniquacPairs = new[] { new { i = 0, j = 1, aIj = 0.0, bIj = -87.46, aJi = 0.0, bJi = -55.29 } },
+        }).GetAwaiter().GetResult();
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+        var json = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        string err = json.GetProperty("error").GetString() ?? "";
+        Assert.Contains("uniquacPairs не применимы", err);
+    }
+
+    [Fact]
+    public void Uniquac_Rq_NormalizedNames()
+    {
+        // Г17-дефект (R19.7c): имя справочника «n-hexane» (дефис) vs ключ таблицы «n_hexane» —
+        // был ложный отказ «расчёт невозможен»; после нормализации — r/q находятся по имени.
+        var c = Login();
+        int w = SubstanceId(c, "water"), hex = SubstanceId(c, "n-hexane");
+        var (result, root) = Post(c, new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.5 }, new { substanceId = hex, molFrac = 0.5 } },
+            t = 343.15,
+            mixingRule = "wong-sandler",
+            activityModel = "uniquac",
+        });
+        double pb = result.GetProperty("bubble_P_kPa").GetDouble();
+        // R29 (A3): fallback теперь настоящий (γ по UNIFAC) — прежний P_bub 66.28 (τ=1) был
+        // симптомом дефекта A3(а): fallback-модель перезаписывалась Uniquac-моделью с нулевыми A/B.
+        // Нормализация имён (R19.7c) сохранена: расчёт идёт без uniquacRq, без ложного отказа.
+        // R29 (A3, факт прогона): γ по UNIFAC вода/гексан — нерастворимая пара, P_bub=161.04 кПа
+        // (UNIFAC-γ воды сильно >1 — физика оценочной модели, С5-ограничение в силе).
+        Assert.InRange(pb, 155.0, 167.0);
+        Assert.True(HasWarn(root, "оценены методом UNIFAC"), "warnings: нет пометки UNIFAC-fallback (R29 A3)");
+        Assert.True(HasWarn(root, "LL-растворимость"), "warnings: нет С5-оговорки");
+    }
+
+    [Fact]
+    public void Uniquac_NoPairs_Warns_TauOne()
+    {
+        var c = Login();
+        int w = SubstanceId(c, "water"), et = SubstanceId(c, "ethanol");
+        var (result, root) = Post(c, new
+        {
+            components = new[] { new { substanceId = w, molFrac = 0.252 }, new { substanceId = et, molFrac = 0.748 } },
+            t = 343.15,
+            activityModel = "uniquac",
+            mixingRule = "wong-sandler",
+        });
+        Assert.True(HasWarn(root, "uniquacPairs не заданы"), "warnings: нет предупреждения об идеальной активности");
+    }
+}
+
+========================================================================
+=== ФАЙЛ: tests/TecHet.Tests.Gerg/GergTests.cs ===
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using TecHet.Tests;
+using Xunit;
+
+namespace TecHet.Tests.Gerg;
+
+/// <summary>
+/// R17.2-шаг 2 (решения владельца КП2.1 №3, 16.11): физический эталон GERG-2008 (С2-а, допуск ±5%
+/// для смесей GERG-списка) — ТЕСТОВЫЙ контур; сборка приложения от него не зависит (С1-г: изоляция —
+/// проект вне основного sln). NuGet CoolProp в nuget.org отсутствует (проверка 16.11: NotFound) —
+/// вариант Б: эталонные числа зафиксированы константами. Источник: CoolProp (MIT, backend HEOS),
+/// сверка 16.11.2026 (прогон python CoolProp; обновление — tools/gerg_reference_check.py).
+/// Эталонные числа (кПа):
+///   CH4/C2H6 50/50 @200 K: bubble 2638.8; dew 440.9;
+///   N2/CO2 50/50 @250 K:   bubble 14498.8; dew 4714.0;
+///   чистые Psat: C2H6@200 = 217.2; CO2@250 = 1785.0 (PR согласуется с 0.2–0.8%).
+/// Схема С2: PR-эталон алгоритма (2090–2135 — заморозка поведения кода) и физический GERG-эталон —
+/// разные задачи. Спорные бинарные кейсы (С1) — SKIP до min-G/TPD (R20) и решения о замене числа.
+/// </summary>
+public class GergTests : IClassFixture<TecHetAppFactory>
+{
+    private readonly TecHetAppFactory _f;
+    public GergTests(TecHetAppFactory f) { _f = f; }
+
+    private static string? _tokenCache;
+    private static readonly object _tokenLock = new();
+
+    private HttpClient Login()
+    {
+        var c = _f.CreateClient();
+        lock (_tokenLock)
+        {
+            if (_tokenCache is null)
+            {
+                HttpStatusCode st = HttpStatusCode.BadRequest;
+                for (int attempt = 0; attempt < 8; attempt++)
+                {
+                    var resp = c.PostAsJsonAsync("/api/auth/login", new { login = "budnikva2@yandex.ru", password = "1661" }).GetAwaiter().GetResult();
+                    st = resp.StatusCode;
+                    if (st == HttpStatusCode.OK)
+                    {
+                        _tokenCache = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult().GetProperty("token").GetString()!;
+                        break;
+                    }
+                    System.Threading.Thread.Sleep(2000);
+                }
+                Assert.Equal(HttpStatusCode.OK, st);
+            }
+        }
+        c.DefaultRequestHeaders.Authorization = new("Bearer", _tokenCache!);
+        return c;
+    }
+
+    private static int SubstanceId(HttpClient c, string name)
+    {
+        var json = c.GetAsync($"/api/substances?q={Uri.EscapeDataString(name)}&size=50").GetAwaiter().GetResult()
+            .Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        foreach (var it in json.GetProperty("items").EnumerateArray())
+        {
+            var nm = it.GetProperty("name").GetString() ?? "";
+            if (string.Equals(nm, name, StringComparison.OrdinalIgnoreCase))
+                return it.GetProperty("id").GetInt32();
+        }
+        return json.GetProperty("items").EnumerateArray().First().GetProperty("id").GetInt32();
+    }
+
+    private static (JsonElement result, JsonElement root) Post(HttpClient c, object body)
+    {
+        var resp = c.PostAsJsonAsync("/api/calc/mixture/vle", body).GetAwaiter().GetResult();
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var r = resp.Content.ReadFromJsonAsync<JsonElement>().GetAwaiter().GetResult();
+        return (r.GetProperty("result"), r);
+    }
+
+    private static (JsonElement result, JsonElement root) Binary(HttpClient c, string a, string b, double t)
+    {
+        return Post(c, new
+        {
+            components = new[] { new { substanceId = SubstanceId(c, a), molFrac = 0.5 }, new { substanceId = SubstanceId(c, b), molFrac = 0.5 } },
+            t = t,
+        });
+    }
+
+    // R17.2: чистое вещество = «смесь» из двух одинаковых компонентов (эндпоинт требует ≥2);
+    // k_ii = 0, математика PR-смеси совпадает с чистым флюидом.
+    private static (JsonElement result, JsonElement root) Pure(HttpClient c, string a, double t)
+    {
+        int id = SubstanceId(c, a);
+        return Post(c, new
+        {
+            components = new[] { new { substanceId = id, molFrac = 0.5 }, new { substanceId = id, molFrac = 0.5 } },
+            t = t,
+        });
+    }
+
+    private static bool HasWarn(JsonElement root, string sub)
+    {
+        foreach (var w in root.GetProperty("warnings").EnumerateArray())
+            if ((w.GetString() ?? "").Contains(sub)) return true;
+        return false;
+    }
+
+    // GERG-2008 эталонные числа (CoolProp/HEOS, сверка 16.11.2026) — «замороженный» физический эталон
+    private const double Gerg_Ch4C2h6_Bubble_200 = 2638.8;
+    private const double Gerg_Ch4C2h6_Dew_200 = 440.9;
+    private const double Gerg_N2Co2_Bubble_250 = 14498.8;
+    private const double Gerg_N2Co2_Dew_250 = 4714.0;
+    private const double Gerg_C2h6_Psat_200 = 217.2;
+    private const double Gerg_Co2_Psat_250 = 1785.0;
+    private const double Tol = 0.05;
+
+    [Fact]
+    public void Gerg_Etalons_Constants_Fixed()
+    {
+        // Документирующая фиксация эталонных чисел (CoolProp 16.11.2026) — защита от случайной правки
+        Assert.Equal(2638.8, Gerg_Ch4C2h6_Bubble_200);
+        Assert.Equal(440.9, Gerg_Ch4C2h6_Dew_200);
+        Assert.Equal(14498.8, Gerg_N2Co2_Bubble_250);
+        Assert.Equal(4714.0, Gerg_N2Co2_Dew_250);
+        Assert.Equal(217.2, Gerg_C2h6_Psat_200);
+        Assert.Equal(1785.0, Gerg_Co2_Psat_250);
+    }
+
+    [Fact]
+    public void Gerg_Pure_C2h6_Psat_200_Within5Pct()
+    {
+        var c = Login();
+        var (r, root) = Pure(c, "ethane", 200.0);
+        var pb = r.GetProperty("bubble_P_kPa").GetDouble();
+        var dev = Math.Abs(pb - Gerg_C2h6_Psat_200) / Gerg_C2h6_Psat_200;
+        Assert.True(dev <= Tol, $"C2H6 Psat@200: движок {pb:0.0} кПа, GERG {Gerg_C2h6_Psat_200} кПа — расхождение {dev * 100:0.0}% > 5%");
+    }
+
+    [Fact]
+    public void Gerg_Pure_Co2_Psat_250_Within5Pct()
+    {
+        var c = Login();
+        var (r, root) = Pure(c, "carbon dioxide", 250.0);
+        var pb = r.GetProperty("bubble_P_kPa").GetDouble();
+        var dev = Math.Abs(pb - Gerg_Co2_Psat_250) / Gerg_Co2_Psat_250;
+        Assert.True(dev <= Tol, $"CO2 Psat@250: движок {pb:0.0} кПа, GERG {Gerg_Co2_Psat_250} кПа — расхождение {dev * 100:0.0}% > 5%");
+    }
+
+    [Fact]
+    public void Gerg_SporCases_Marked_Honestly()
+    {
+        // Документирующий тест слоя честности: спорные кейсы ДОЛЖНЫ быть маркированы
+        // (псевдокорень — предупреждение противоречия; сверхкритичность — предупреждение).
+        var c = Login();
+        var (rN, wN) = Binary(c, "nitrogen", "carbon dioxide", 250.0);
+        var marked = rN.TryGetProperty("bubble_stability_contradiction", out var sc) && sc.GetBoolean();
+        Assert.True(marked, "N2/CO2 @250: ожидается bubble_stability_contradiction=True (псевдокорень)");
+        Assert.True(HasWarn(wN, "противоречие критериев"), "N2/CO2 @250: ожидается предупреждение противоречия");
+        var (rM, wM) = Binary(c, "methane", "ethane", 200.0);
+        Assert.True(HasWarn(wM, "сверхкритичн"), "CH4/C2H6 @200: ожидается предупреждение о сверхкритическом компоненте");
+    }
+
+    // R20-шаг 2 (решение владельца 16.11: активация SKIP-тестов как ЧЕСТНЫХ сверок против констант):
+    // пока расхождение больше допуска — тест ФИКСИРУЕТ факт расхождения (PASSED) и превращается
+    // в Within5Pct после решения владельца по С2 (замена основного числа/уточнение модели).
+    [Fact]
+    public void Gerg_Ch4C2h6_Bubble_200_Within5Pct()
+    {
+        var c = Login();
+        var (r, root) = Binary(c, "methane", "ethane", 200.0);
+        var pb = r.GetProperty("bubble_P_kPa").GetDouble();
+        var dev = Math.Abs(pb - Gerg_Ch4C2h6_Bubble_200) / Gerg_Ch4C2h6_Bubble_200;
+        if (dev <= Tol)
+            return;   // расхождение устранено — сверка пройдена (после решения С2)
+        // Честная фиксация: расхождение зафиксировано и должно быть в известном диапазоне (−19.7% классика)
+        Assert.True(dev > Tol, $"CH4/C2H6 bubble@200: движок {pb:0.0} кПа, GERG {Gerg_Ch4C2h6_Bubble_200} кПа — расхождение {dev * 100:0.0}% (внезапно в допуске? обновите тест после решения С2)");
+    }
+
+    [Fact]
+    public void Gerg_N2Co2_Bubble_250_Within5Pct()
+    {
+        var c = Login();
+        var (r, root) = Binary(c, "nitrogen", "carbon dioxide", 250.0);
+        var pb = r.GetProperty("bubble_P_kPa").GetDouble();
+        var dev = Math.Abs(pb - Gerg_N2Co2_Bubble_250) / Gerg_N2Co2_Bubble_250;
+        // R20-шаг 2 (факт): PR-изотерма однофазная (disc>=0) — классика 83133.6 вне физики; противоречие маркировано
+        var marked = r.TryGetProperty("bubble_stability_contradiction", out var sc) && sc.GetBoolean();
+        Assert.True(marked, "N2/CO2 @250: ожидается bubble_stability_contradiction=True");
+        Assert.True(dev > Tol, $"N2/CO2 bubble@250: движок {pb:0.0} кПа, GERG {Gerg_N2Co2_Bubble_250} кПа — расхождение {dev * 100:0.0}% (внезапно в допуске? обновите тест после решения С2)");
+    }
+}
+
+========================================================================
+=== ФАЙЛ: tests/TecHet.Tests/R31Sprint3Tests.cs ===
+using System;
+using System.Collections.Generic;
+using TecHet.Api.Errors;
+using TecHet.Api.Services.Calc;
+using Xunit;
+
+namespace TecHet.Tests;
+
+/// <summary>
+/// R31 (спринт 3, фаза 1 — часть 1, тесты-первыми):
+/// (а) инвариант B_mix правила Wong–Sandler: b_mix − a_mix/(RT) ≡ ΣΣ x_i x_j B_ij
+///     (R30-ревью: прежний знаменатель нарушал инвариант на −4.16% при geRt=0.9121);
+/// (б) pure-limit: чистый компонент — a_mix = a_i, b_mix = b_i (при любом GE);
+/// (в) честный пар при T ≥ max(Tc) в PH-слое — явная проверка вместо catch(ValidationException) (4.1).
+/// Арбитр: независимая python-реплика R30/R31 (PSR запись R31).
+/// </summary>
+public class R31Sprint3Tests
+{
+    private const double TcW = 647.1, PcW = 22064.0, OmW = 0.3443;
+    private const double TcE = 514.71, PcE = 6268.0, OmE = 0.646;
+    private const double TRef = 343.15;
+    private static readonly double[] Tc = { TcW, TcE };
+    private static readonly double[] Pc = { PcW, PcE };
+    private static readonly double[] Om = { OmW, OmE };
+
+    private static (double[] a, double[] b) Pure()
+    {
+        var (a, b, _) = MixtureVleService.PrParams(Tc, Pc, Om, TRef, 0.0, null);
+        return (a, b);
+    }
+
+    private static WongSandlerMixingRule Ws(double k = 0.0)
+    {
+        var tau = new double[2, 2];
+        var alpha = new double[2, 2];
+        tau[0, 1] = 2.0; tau[1, 0] = 1.5;   // произвольный GE — инвариант обязан держаться при любом γ
+        alpha[0, 1] = 0.3; alpha[1, 0] = 0.3;
+        var ge = new NrtlActivityModel(2, tau, alpha);
+        var m = new double[2, 2];
+        m[0, 1] = k; m[1, 0] = k;
+        return new WongSandlerMixingRule(Tc, Pc, Om, m, m, ge);
+    }
+
+    [Fact]
+    public void Ws_Invariant_Bmix()
+    {
+        // b_mix − a_mix/(RT) ≡ ΣΣ x_i x_j B_ij — точное тождество (отн. 1e-10)
+        var (a, b) = Pure();
+        var rule = Ws(k: 0.0);
+        var x = new[] { 0.5, 0.5 };
+        var (am, bm) = rule.Mix(x, TRef);
+        double rt = 8.31446261815324 * TRef;
+        double s2 = 0;
+        for (int i = 0; i < 2; i++)
+            for (int j = 0; j < 2; j++)
+                s2 += x[i] * x[j] * (0.5 * (b[i] + b[j]) - Math.Sqrt(a[i] * a[j]) / rt);
+        double lhs = bm - am / rt;
+        Assert.Equal(s2, lhs, 12);
+    }
+
+    [Fact]
+    public void Ws_Invariant_NonEqualMixture()
+    {
+        // инвариант при несимметричном составе (25/75) и k_ij≠0
+        var (a, b) = Pure();
+        var rule = Ws(k: 0.05);
+        var x = new[] { 0.25, 0.75 };
+        var (am, bm) = rule.Mix(x, TRef);
+        double rt = 8.31446261815324 * TRef;
+        double s2 = 0;
+        for (int i = 0; i < 2; i++)
+            for (int j = 0; j < 2; j++)
+                s2 += x[i] * x[j] * (0.5 * (b[i] + b[j]) * (1.0 - (i == j ? 0.0 : 0.05))
+                       - Math.Sqrt(a[i] * a[j]) * (1.0 - (i == j ? 0.0 : 0.05)) / rt);
+        Assert.Equal(s2, bm - am / rt, 12);
+    }
+
+    [Fact]
+    public void Ws_Pure_Limit()
+    {
+        // x=[1,0]: a_mix = a_water, b_mix = b_water (независимо от GE)
+        var (a, b) = Pure();
+        var rule = Ws(k: 0.0);
+        var (am, bm) = rule.Mix(new[] { 1.0, 0.0 }, TRef);
+        Assert.Equal(b[0], bm, 10);
+        Assert.Equal(a[0], am, 10);
+    }
+
+    [Fact]
+    public void Enthalpy_Supercritical_HonestVapor()
+    {
+        // T > max(Tc): явная проверка 4.1 — честный однофазный пар с предупреждением,
+        // а не тихая ветка catch
+        var cp = new Func<double, double>?[] { t => 35.0, t => 65.0 };
+        var (r, warns) = MixtureVleService.SolveEnthalpy(
+            new[] { "water", "ethanol" }, Tc, Pc, Om,
+            new[] { 18.015, 46.069 }, new[] { 0.5, 0.5 }, TcW + 1.0, 100e3, 0.0, null, cp);
+        Assert.Equal("vapor", Convert.ToString(r["phase"]));
+        Assert.Contains(warns, w => w.Contains("T выше Tcrit"));
+    }
+}
+
+========================================================================
+=== ФАЙЛ: src/TecHet.Api/Services/Calc/MichelsenFlash.cs ===
+namespace TecHet.Api.Services.Calc;
+
+/// <summary>
+/// R19.6 (решение владельца А1-а, КП2.1 19:19 15.11): stability-тест Мичельсена (tangent-plane
+/// distance, TPD) с multi-start и демпфированный SS-flash для φ-φ Wong–Sandler.
+///
+/// TPD от опорной фазы r (фугазности φ^r(z) при глобальном составе z):
+///   TPD(w) = Σ_i w_i·(ln w_i + ln φ_i(w) − ln φ_i^r(z))
+/// Минимум TPD ≥ 0 → опорная фаза стабильна (нет второй фазы); min TPD < 0 → опора нестабильна,
+/// проба w* — кандидат во вторую фазу. Итерации Мичельсена: w_i ← w_i·exp(lnφ_i^r(z) − lnφ_i(w))
+/// с нормировкой (фиксированная точка минимума TPD; лимит 300 итераций).
+///
+/// Multi-start: чистые компоненты, равномерный состав, z-пробы, обогащённые по lnφ-отношению.
+/// После TPD: если liquid-опора стабильна → однофазная жидкость (β=0); иначе двухфазный flash
+/// с перебором K-стартов (TPD-проба → φL(z)/φV(z) → Wilson-K) и SS с адаптивным демпфированием
+/// (θ=0.4 при dMax>3, 0.7 при dMax>0.5). φ_i при single-корнях вычислимы (PR-кубик имеет корень
+/// всегда) — итерации не прерываются (устранён R19.5-дефект). БЕЗ ранних f0/f1-выходов: при
+/// GE-моделях стартовые K не отражают равновесие — ранний выход подменял двухфазный корень
+/// однофазным (LL-система вода/этанол τ=5/5: Wilson-K давал β=0 при существующем VL-корне).
+///
+/// LL-детекция (Г15, минимум): после сходимости flash — TPD-тест жидкой фазы x; TPD < −1e-6 →
+/// LlSuspected (предупреждение «вероятно расщепление на две жидкие фазы»).
+/// </summary>
+public sealed record MichelsenFlashResult(double Beta, double[]? X, double[]? Y, bool Converged, bool LlSuspected, string Note)
+{
+    public double? SecondBeta { get; init; }   // R19.6b (в): альтернативный равновесный корень, если найден
+}
+
+public static class MichelsenFlash
+{
+    public delegate (double Z, double[] Phi, bool Single, bool? RootIsLiquid) PhiOf(double[] x, bool liquid);
+
+    private const double TpdEps = -1e-9;
+    private const int TpdIters = 300;
+    private const int SsIters = 120;
+    private const double ConvergedTol = 1e-8;   // шум численных производных (ε=1e-6)
+
+    // R20-шаг 1 (решение владельца 16.11): публичный TPD-минимайзер — перенос stability-теста
+    // на bubble/dew. Возвращает (min TPD, проба w*) от опорной фазы liquidRef при составе z.
+    // Пробы — в жидкой фазе (как в Solve). null — φ не вычислимы при пробах.
+    public static (double Tpd, double[] W)? MinTpd(PhiOf phiOf, double[] z, bool liquidRef, bool probeLiquid)
+    {
+        int n = z.Length;
+        var (_, phiRef, _, _) = phiOf(z, liquidRef);
+        if (phiRef is null) return null;
+        var lnRef = new double[n];
+        for (int i = 0; i < n; i++) lnRef[i] = Math.Log(Math.Max(phiRef[i], 1e-300));
+        var starts = new List<double[]>();
+        for (int i = 0; i < n; i++)
+        {
+            var s = new double[n];
+            Array.Fill(s, 1e-12);
+            s[i] = 1.0;
+            starts.Add(s);
+        }
+        starts.Add(Enumerable.Repeat(1.0 / n, n).ToArray());
+        starts.Add((double[])z.Clone());
+        // R21: старт-проба из K-отношения опоры: w ∝ z·φ_ref(z)/φ_opp(z) — сразу в бассейне
+        // пар-/жидкой пробы (вода/этанол: чистые и z-старты уводило к границе домена).
+        var (_, phiOppZ, _, _) = phiOf(z, probeLiquid);
+        if (phiOppZ is not null)
+        {
+            var wK = new double[n];
+            double sK = 0;
+            for (int i = 0; i < n; i++)
+            {
+                wK[i] = z[i] * Math.Exp(lnRef[i] - Math.Log(Math.Max(phiOppZ[i], 1e-300)));
+                sK += wK[i];
+            }
+            if (sK > 0 && double.IsFinite(sK))
+            {
+                for (int i = 0; i < n; i++) wK[i] /= sK;
+                starts.Add(wK);
+            }
+        }
+        (double, double[])? best = null;
+        foreach (var w0 in starts)
+        {
+            var w = (double[])w0.Clone();
+            for (int it = 0; it < TpdIters; it++)
+            {
+                var (_, phiw, _, _) = phiOf(w, probeLiquid);
+                if (phiw is null) break;
+                // R21: минимум TPD отслеживается ПО ТРАЕКТОРИИ (φ_w уже вычислен — почти бесплатно):
+                // фикс-точка Мичельсена при больших отношениях фугазностей может расходиться к
+                // границе домена (вода/этанол: w_вода→0, TPD→+0.55), а минимум лежит внутри
+                // траектории (TPD(w0=z·K)=−0.019 при валидной классике 88.14 кПа).
+                double tpdNow = 0;
+                for (int i = 0; i < n; i++)
+                    tpdNow += w[i] * (Math.Log(Math.Max(w[i], 1e-300)) - Math.Log(Math.Max(z[i], 1e-300))
+                         + Math.Log(Math.Max(phiw[i], 1e-300)) - lnRef[i]);
+                // R29 (A7): NaN-tpd не записывается в best (NaN < x — false → застревал навсегда).
+                if (double.IsFinite(tpdNow) && (best is null || tpdNow < best.Value.Item1)) best = (tpdNow, (double[])w.Clone());
+                double s = 0;
+                var nw = new double[n];
+                for (int i = 0; i < n; i++)
+                {
+                    nw[i] = w[i] * z[i] * Math.Exp(lnRef[i] - Math.Log(Math.Max(phiw[i], 1e-300)));
+                    s += nw[i];
+                }
+                if (s <= 0 || !double.IsFinite(s)) break;
+                for (int i = 0; i < n; i++) w[i] = nw[i] / s;
+            }
+        }
+        return best is null ? null : (best.Value.Item1, best.Value.Item2);
+    }
+
+    // R22.1: legacy-форма (по умолчанию; R19.6-эталоны заморожены). Тело перенесено в SolveCore
+    // без вычислительных изменений.
+    public static MichelsenFlashResult Solve(PhiOf phiOf, double[] z, double tK, double pPa, double[] tc, double[] pc, double[] om, bool tpdCorrect = false)
+        => SolveCore(phiOf, z, tK, pPa, tc, pc, om, tpdCorrect);
+
+    // R22.1: корректная форма TPD — с ln z_i (R21b решение №6). Смещение относительно legacy:
+    // −Σw_i·ln z_i (при равных долях −0.69315). R19.6-эталоны остаются на legacy-форме.
+    public static MichelsenFlashResult SolveCorrect(PhiOf phiOf, double[] z, double tK, double pPa, double[] tc, double[] pc, double[] om)
+        => SolveCore(phiOf, z, tK, pPa, tc, pc, om, tpdCorrect: true);
+
+    private static MichelsenFlashResult SolveCore(PhiOf phiOf, double[] z, double tK, double pPa, double[] tc, double[] pc, double[] om, bool tpdCorrect)
+    {
+        int n = z.Length;
+        var (_, phiLz, _, _) = phiOf(z, true);
+        var (_, phiVz, _, _) = phiOf(z, false);
+        // R29 (A9): φ опоры null → NRE в Math.Log(phiLz[i]) ниже. Честная ветка: NaN-β/null-составы.
+        if (phiLz is null || phiVz is null)
+            return new(double.NaN, null, null, false, false, "Мичельсен (R19.6): φ опоры не вычислимы — TPD-тест не выполнен.");
+        var lnL = new double[n];
+        var lnV = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            lnL[i] = Math.Log(Math.Max(phiLz[i], 1e-300));
+            lnV[i] = Math.Log(Math.Max(phiVz[i], 1e-300));
+        }
+
+        // R22.1: префикс предупреждения при корректной форме TPD (R21b решение №6)
+        string tpdNote = tpdCorrect
+            ? "TPD-форма корректная (R22.1: с ln z_i; R21b решение №6) — смещение legacy-формы: −Σw_i·ln z_i (равные доли: −0.69315). "
+            : "";
+        var starts = new List<double[]>();
+        for (int i = 0; i < n; i++)
+        {
+            var s = new double[n];
+            Array.Fill(s, 1e-12);
+            s[i] = 1.0;
+            starts.Add(s);
+        }
+        starts.Add(Enumerable.Repeat(1.0 / n, n).ToArray());
+        starts.Add(Norm(z.Select((zi, i) => zi * Math.Exp(lnL[i] - lnV[i]))));
+        starts.Add(Norm(z.Select((zi, i) => zi * Math.Exp(lnV[i] - lnL[i]))));
+
+        var tpdL = BestTpd(lnL, w => phiOf(w, true), starts, tpdCorrect ? z : null);
+        // R29 (A7): диагностика non-finite проб — раньше «молчала» (см. BestTpd).
+        string rejNote = tpdL is not null && tpdL.Value.Rejected > 0
+            ? string.Format(" R29 (A7): отброшено non-finite TPD-проб: {0} — min TPD найден по конечным пробам.", tpdL.Value.Rejected)
+            : "";
+        if (tpdL is null)
+            return new(double.NaN, null, null, false, false, tpdNote + "Мичельсен (R19.6): TPD-тест не выполнен (φ не вычислимы или non-finite при всех пробах) — расчёт приблизительный.");
+        if (tpdL.Value.Tpd >= TpdEps)
+            return new(0.0, null, null, true, false,
+                tpdNote + string.Format("TPD-тест Мичельсена (R19.6): жидкая фаза стабильна (min TPD = {0:0.###E+00}) — однофазная жидкость.{1}", tpdL.Value.Tpd, rejNote));
+
+        var wStar = tpdL.Value.W;
+        var (zWl, _, _, _) = phiOf(wStar, true);
+        var (_, phiWv, _, _) = phiOf(wStar, false);
+        bool secondIsLiquidLike = zWl < 0.2;
+        double[] K = new double[n];
+        for (int i = 0; i < n; i++)
+            K[i] = Math.Clamp(Math.Exp(lnL[i] - Math.Log(Math.Max(phiWv[i], 1e-300))), 1e-10, 1e10);
+
+        // R19.6: проба TPD при LL-системах может быть жидкоподобной — K-инициализация от неё
+        // уводит SS в однофазный пар/жидкость. Перебор стартов: (0) от TPD-пробы, (1) KFromZ
+        // (φL(z)/φV(z)), (2) Wilson-K (Psat/P) — классический старт R17, надёжно попадает в
+        // бассейн притяжения двухфазного корня при VL-области (проверено на LL-кейсе τ=5/5).
+        double beta = 0.5;
+        var x = new double[n];
+        var y = new double[n];
+        bool converged = false;
+        bool twoPhase = false;
+        for (int attempt = 0; attempt < 3 && !twoPhase; attempt++)
+        {
+        if (attempt == 1)
+        {
+            var kw = KFromZ(lnL, lnV, n);
+            for (int i = 0; i < n; i++) K[i] = kw[i];
+        }
+        else if (attempt == 2)
+        {
+            for (int i = 0; i < n; i++)
+                K[i] = Math.Clamp(WilsonPsat(tc[i], pc[i], om[i], tK) / pPa, 1e-10, 1e10);
+        }
+        for (int outer = 0; outer < SsIters; outer++)
+        {
+            // R19.6: без ранних f0/f1-выходов (R19.5-прецедент при wsMode): при GE-моделях
+            // стартовые K не отражают равновесие — ранний выход подменяет двухфазный корень
+            // однофазным (LL-системы: Wilson-K при LL-поверхности даёт f0<0 при существующем
+            // VL-корне). Ранний выход делается ПОСЛЕ сходимости K (порог ConvergedTol).
+            double blo = 0.0, bhi = 1.0;
+            for (int it = 0; it < 60; it++)
+            {
+                double bm = 0.5 * (blo + bhi);
+                double fv = 0;
+                for (int i = 0; i < n; i++) fv += z[i] * (K[i] - 1.0) / (1.0 + bm * (K[i] - 1.0));
+                if (fv > 0) blo = bm; else bhi = bm;
+            }
+            beta = Math.Clamp(0.5 * (blo + bhi), 1e-9, 1.0 - 1e-9);
+            double sx = 0, sy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                x[i] = z[i] / (1.0 + beta * (K[i] - 1.0));
+                y[i] = K[i] * x[i];
+                sx += x[i]; sy += y[i];
+            }
+            for (int i = 0; i < n; i++) { x[i] /= sx; y[i] /= sy; }
+            var (_, pL, _, _) = phiOf(x, true);
+            var (_, pV, _, _) = phiOf(y, false);
+            double dMax = 0, theta = 1.0;
+            var lnKn = new double[n];
+            for (int i = 0; i < n; i++)
+                lnKn[i] = Math.Log(Math.Max(pL[i], 1e-300)) - Math.Log(Math.Max(pV[i], 1e-300));
+            for (int i = 0; i < n; i++)
+                dMax = Math.Max(dMax, Math.Abs(lnKn[i] - Math.Log(Math.Max(K[i], 1e-300))));
+            if (dMax > 3.0) theta = 0.4; else if (dMax > 0.5) theta = 0.7;
+            for (int i = 0; i < n; i++)
+            {
+                double lnK = Math.Log(Math.Max(K[i], 1e-300));
+                K[i] = Math.Clamp(Math.Exp(lnK + theta * (lnKn[i] - lnK)), 1e-10, 1e10);
+            }
+            if (dMax < ConvergedTol) { converged = true; break; }
+        }
+        if (beta > 1e-9 && beta < 1.0 - 1e-9) twoPhase = true;   // двухфазный корень найден — рестарт не нужен
+        }
+        if (beta <= 1e-9)
+            return new(0.0, null, null, true, false,
+                tpdNote + "Мичельсен (R19.6): все старта вернулись к однофазной жидкости (β→0): стартовые K не попали в бассейн притяжения двухфазного корня — если ожидается двухфазность (LL-системы, близость к границам), проверьте соседние P; полный LL-расчёт — вне скоупа (решение владельца КП2.1 №2: неверная причина в note хуже отсутствия note).");
+        if (beta >= 1.0 - 1e-9)
+            return new(1.0, null, null, true, false,
+                tpdNote + "Мичельсен (R19.6): все старта вернулись к однофазному пару (β→1): стартовые K не попали в бассейн притяжения двухфазного корня — проверьте соседние P; полный LL-расчёт — вне скоупа.");
+
+        // LL-детекция: стабильность жидкой фазы x (Г15, минимум)
+        bool ll = secondIsLiquidLike;
+        if (!ll)
+        {
+            var (_, phiXl, _, _) = phiOf(x, true);
+            var lnX = new double[n];
+            for (int i = 0; i < n; i++) lnX[i] = Math.Log(Math.Max(phiXl[i], 1e-300));
+            var tpdX = BestTpd(lnX, w => phiOf(w, true), starts, tpdCorrect ? z : null);
+            if (tpdX is not null && tpdX.Value.Tpd < -1e-6) ll = true;
+        }
+
+        string note = tpdNote + (converged
+            ? string.Format("Мичельсен (R19.6): stability-тест TPD — жидкая фаза при z нестабильна (min TPD = {0:0.###E+00}); flash от стабильности-пробы сошёлся{1}.",
+                tpdL.Value.Tpd, secondIsLiquidLike ? "; вторая фаза жидкоподобна (Z_liquid(w*) < 0.2)" : "")
+            : string.Format("Мичельсен (R19.6): flash от стабильности-пробы (min TPD = {0:0.###E+00}) не сошёлся за {1} итераций SS — результат приблизительный.", tpdL.Value.Tpd, SsIters)) + rejNote;
+        // R19.6b (в, решение владельца КП2.1 №2): дополнительная попытка со следующим стартом —
+        // если найден ДРУГОЙ равновесный корень, предупреждение с обоими β (выбор корня — min-G).
+        double? beta2 = null;
+        if (converged && twoPhase)
+        {
+            for (int alt = 0; alt < 2 && beta2 is null; alt++)
+            {
+                double[] Kalt;
+                if (alt == 0) Kalt = KFromZ(lnL, lnV, n);
+                else { Kalt = new double[n]; for (int i = 0; i < n; i++) Kalt[i] = Math.Clamp(WilsonPsat(tc[i], pc[i], om[i], tK) / pPa, 1e-10, 1e10); }
+                bool sameAsFirst = Kalt.Select((kq, i) => Math.Abs(kq - K[i]) / Math.Max(K[i], 1e-12)).Max() < 1e-6;
+                if (sameAsFirst) continue;
+                var (xA, yA) = SolveAlt(phiOf, z, Kalt);
+                bool convA = true;   // SolveAlt всегда возвращает составы; конвергенция неявно проверена внутри
+                double bAlt = BetaOf(phiOf, z, xA, yA);
+                if (convA && bAlt > 1e-9 && bAlt < 1.0 - 1e-9 && Math.Abs(bAlt - beta) > 1e-3)
+                {
+                    beta2 = bAlt;
+                }
+            }
+        }
+        // R19.6b (б, решение владельца С1): выбор корня по min-G — глобальный минимум G/RT
+        // двухфазного состояния G = (1−β)Σx ln(xφL) + βΣy ln(yφV). При β2 с меньшим G — пере-выбор.
+        if (beta2 is double b2)
+        {
+            double g1 = GibbsRT(phiOf, x, y, beta);
+            var (xa, ya) = SolveAlt(phiOf, z, KFromZ(lnL, lnV, n));
+            double g2 = GibbsRT(phiOf, xa, ya, b2);
+            if (g2 < g1)
+            {
+                beta = b2; x = xa; y = ya; beta2 = null;
+                note += string.Format(" Выбор корня по min-G (R19.6b, решение С1 КП2.1 №2): принят β={0:0.####} (G/RT={1:0.####}); отвергнут β-альтернатива (G/RT выше).", beta, g2);
+            }
+            else
+                note += string.Format(" Обнаружено несколько равновесных решений: β={0:0.####} (выбран, min-G: G/RT={1:0.####}) и β={2:0.####} (G/RT={3:0.####} выше) (R19.6b, решение С1).", beta, g1, b2, g2);
+        }
+        return new(beta, (double[])x.Clone(), (double[])y.Clone(), converged, ll, note) { SecondBeta = beta2 };
+    }
+
+    // R19.6b (б): G/RT двухфазного состояния при составе z
+    private static double GibbsRT(PhiOf phiOf, double[] x, double[] y, double beta)
+    {
+        int n = x.Length;
+        var (_, pL, _, _) = phiOf(x, true);
+        var (_, pV, _, _) = phiOf(y, false);
+        double gl = 0, gv = 0;
+        for (int i = 0; i < n; i++)
+        {
+            gl += x[i] * Math.Log(Math.Max(x[i] * pL[i], 1e-300));
+            gv += y[i] * Math.Log(Math.Max(y[i] * pV[i], 1e-300));
+        }
+        return (1.0 - beta) * gl + beta * gv;
+    }
+
+    // R19.6b: одно SS-прохождение от заданной K-инициализации (для оценки G альтернативного корня)
+    private static (double[] X, double[] Y) SolveAlt(PhiOf phiOf, double[] z, double[] K0)
+    {
+        int n = z.Length;
+        var K = (double[])K0.Clone();
+        var x = new double[n]; var y = new double[n];
+        for (int outer = 0; outer < SsIters; outer++)
+        {
+            double blo = 0.0, bhi = 1.0;
+            for (int it = 0; it < 60; it++)
+            {
+                double bm = 0.5 * (blo + bhi);
+                double fv = 0;
+                for (int i = 0; i < n; i++) fv += z[i] * (K[i] - 1.0) / (1.0 + bm * (K[i] - 1.0));
+                if (fv > 0) blo = bm; else bhi = bm;
+            }
+            double beta = Math.Clamp(0.5 * (blo + bhi), 1e-9, 1.0 - 1e-9);
+            double sx = 0, sy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                x[i] = z[i] / (1.0 + beta * (K[i] - 1.0));
+                y[i] = K[i] * x[i];
+                sx += x[i]; sy += y[i];
+            }
+            for (int i = 0; i < n; i++) { x[i] /= sx; y[i] /= sy; }
+            var (_, pL, _, _) = phiOf(x, true);
+            var (_, pV, _, _) = phiOf(y, false);
+            double dMax = 0, theta = 1.0;
+            var lnKn = new double[n];
+            for (int i = 0; i < n; i++)
+                lnKn[i] = Math.Log(Math.Max(pL[i], 1e-300)) - Math.Log(Math.Max(pV[i], 1e-300));
+            for (int i = 0; i < n; i++)
+                dMax = Math.Max(dMax, Math.Abs(lnKn[i] - Math.Log(Math.Max(K[i], 1e-300))));
+            if (dMax > 3.0) theta = 0.4; else if (dMax > 0.5) theta = 0.7;
+            for (int i = 0; i < n; i++)
+            {
+                double lnK = Math.Log(Math.Max(K[i], 1e-300));
+                K[i] = Math.Clamp(Math.Exp(lnK + theta * (lnKn[i] - lnK)), 1e-10, 1e10);
+            }
+            if (dMax < ConvergedTol) break;
+        }
+        return (x, y);
+    }
+
+    // R19.6b: β по составам фаз (x из z): β = (z0 − x0)/(y0 − x0)
+    private static double BetaOf(PhiOf phiOf, double[] z, double[] x, double[] y)
+    {
+        int n = z.Length;
+        for (int i = 0; i < n; i++)
+        {
+            if (Math.Abs(y[i] - x[i]) > 1e-12)
+                return Math.Clamp((z[i] - x[i]) / (y[i] - x[i]), 0.0, 1.0);
+        }
+        return 0.5;
+    }
+
+    private static (double Tpd, double[] W, int Rejected)? BestTpd(double[] lnPhiRef, Func<double[], (double Z, double[] Phi, bool Single, bool? RootIsLiquid)> phiOf, List<double[]> starts, double[]? zRef = null)
+    {
+        (double, double[])? best = null;
+        int rejected = 0;   // R29 (A7): счётчик non-finite проб — диагностика вместо молчания
+        foreach (var w0 in starts)
+        {
+            var w = (double[])w0.Clone();
+            Normalize(w);
+            for (int it = 0; it < TpdIters; it++)
+            {
+                var (_, phiw, _, _) = phiOf(w);
+                if (phiw is null) break;
+                double s = 0;
+                var nw = new double[w.Length];
+                for (int i = 0; i < w.Length; i++)
+                {
+                    nw[i] = w[i] * Math.Exp(lnPhiRef[i] - Math.Log(Math.Max(phiw[i], 1e-300)));
+                    s += nw[i];
+                }
+                if (s <= 0 || !double.IsFinite(s)) break;
+                for (int i = 0; i < w.Length; i++) w[i] = nw[i] / s;
+            }
+            var (_, phiw2, _, _) = phiOf(w);
+            if (phiw2 is null) continue;
+            double tpd = 0;
+            for (int i = 0; i < w.Length; i++)
+                tpd += w[i] * (Math.Log(Math.Max(w[i], 1e-300)) + Math.Log(Math.Max(phiw2[i], 1e-300)) - lnPhiRef[i]);
+            if (zRef is not null)   // R22.1: корректная форма — минус Σ w_i·ln z_i (R21b решение №6)
+                for (int i = 0; i < w.Length; i++) tpd -= w[i] * Math.Log(Math.Max(zRef[i], 1e-300));
+            // R29 (A7): NaN-tpd не записывается в best (NaN < x — false → застревал навсегда:
+            // K=NaN → RR-fv=NaN → β→1e-9 → уверенная «однофазная жидкость» без диагностики).
+            if (!double.IsFinite(tpd)) { rejected++; continue; }
+            if (best is null || tpd < best.Value.Item1) best = (tpd, (double[])w.Clone());
+        }
+        return best is null ? null : (best.Value.Item1, best.Value.Item2, rejected);
+    }
+
+    // R19.6: альтернативная K-инициализация — отношение фугазностей при z
+    private static double[] KFromZ(double[] lnL, double[] lnV, int n)
+    {
+        var K = new double[n];
+        for (int i = 0; i < n; i++) K[i] = Math.Clamp(Math.Exp(lnL[i] - lnV[i]), 1e-10, 1e10);
+        return K;
+    }
+
+    // R17: Wilson-K-оценка (1969) — стартовые K для SS-flash
+    private static double WilsonPsat(double tc, double pc, double omega, double t)
+        => pc * Math.Exp(5.373 * (1 + omega) * (1 - tc / t));
+
+    private static void Normalize(double[] x)
+    {
+        double s = 0;
+        for (int i = 0; i < x.Length; i++) s += x[i];
+        if (s > 0)
+            for (int i = 0; i < x.Length; i++) x[i] /= s;
+    }
+
+    // R27 (C8): Norm должен нормировать. Прежняя версия (ToArray) не нормировала — спасало
+    // Normalize(w) внутри BestTpd; это мина при любом переиспользовании.
+    private static double[] Norm(IEnumerable<double> v)
+    {
+        var a = v.ToArray();
+        Normalize(a);
+        return a;
+    }
+}
