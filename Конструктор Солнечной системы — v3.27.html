@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Конструктор Солнечной системы v3.26 — интерактивная N-body симуляция: парниковый эффект, жизнь, луны, типы звёзд, шкала Кардашева, живое Солнце, гравитационная лепка орбит мышью, резонансы, космический навигатор с двумя кораблями, станцией «МИР-2» и режимом вопроса">
-<title>Конструктор Солнечной системы — v3.26</title>
+<meta name="description" content="Конструктор Солнечной системы v3.27 — интерактивная N-body симуляция: парниковый эффект, жизнь, луны, типы звёзд, шкала Кардашева, живое Солнце, гравитационная лепка орбит мышью, резонансы, космический навигатор с двумя кораблями, станцией «МИР-2» и режимом вопроса">
+<title>Конструктор Солнечной системы — v3.27</title>
 <style>
   :root {
     --bg: #0a0f1a; --panel: #111827; --panel-2: #1f2937; --border: #2a3548;
@@ -424,7 +424,7 @@
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="scene-canvas" data-help="canvas"></canvas>
-      <div id="watermark">В. А. Будник<br>25.11.2026 · v3.26</div>
+      <div id="watermark">В. А. Будник<br>25.11.2026 · v3.27</div>
       <div class="hud-corner" id="hud-info" data-help="hud">
         <div><b>ЛКМ</b> — выбрать · <b>drag</b> — вращать · <b>СКМ</b> — пан · <b>колесо</b> — зум</div>
         <div><b>✋ потяни планету</b> — лепка орбиты · тяни <b>жёлтую стрелку</b> — вектор скорости · резонансы <b>🔗</b> внизу</div>
@@ -435,7 +435,7 @@
         <span class="close" id="tut-close" data-help="tut-close">&times;</span>
         <h3>Конструктор Солнечной системы — Руководство</h3>
         <p>Перед вами модель планетной системы, в которой физика считается честно: гравитация между телами, парниковый эффект, вода в трёх фазах, развитие жизни по шести биохимиям, старение звёзд. Орбиты и размеры на экране сжаты, чтобы всё влезло, — но климат, столкновения и периоды обращения настоящие.</p>
-        <p>Главный принцип v3.26: систему не обязательно редактировать числами. Возьмите планету мышью и потяните — орбита, климат и льды пересчитаются под курсором. А если что-то неясно — включите режим «? Вопрос» и кликните по любой кнопке или ползунку: вместо действия вы получите объяснение, зачем он нужен.</p>
+        <p>Главный принцип v3.27: систему не обязательно редактировать числами. Возьмите планету мышью и потяните — орбита, климат и льды пересчитаются под курсором. А если что-то неясно — включите режим «? Вопрос» и кликните по любой кнопке или ползунку: вместо действия вы получите объяснение, зачем он нужен.</p>
         <details open><summary>Быстрый старт: 5 минут до первой живой планеты</summary>
           <div class="row"><span>1.</span><b>Поставьте паузу (Space) и кликните по Земле — справа откроется её редактор, слева появится HUD орбиты</b></div>
           <div class="row"><span>2.</span><b>Сначала прочитайте «Что значит каждый ползунок» ниже — 18 параметров, каждый с примером</b></div>
@@ -5583,9 +5583,10 @@ function ensureBioMap(b) {
   return bio._map;
 }
 function applyGeoEdits(bio, packed) { // v3.23: восстановление правок гео-редактора из сейва
-  // v3.26-фикс (P0): формат теперь детерминирован — bioDeserialize ставит _geoEditsFmt
-  // по версии сцены (≤3 → 'abs', 4 → 'delta', ≥5 → 'v2'), угадывание осталось только
-  // запасным путём для данных без версии. {v:2, cells} — квантованный дельта-формат
+  // v3.27-фикс (P0): формат описывает себя сам — bioDeserialize ставит _geoEditsFmt:
+  // объект → 'v2', маркер geoFmt=2 → 'delta', версия ≤3 → 'abs', ≥5 → 'delta'; версия 4
+  // двусмысленна (v3.23-абсолют и v3.24-дельта писали её одинаково) → null, то есть
+  // эвристика some ниже. {v:2, cells} — квантованный дельта-формат
   // ([дельта-индекс, elev*255, crack*100, crater*100, (vegD+1)*50]); плоский массив —
   // абсолютный v3.23 ([индекс, elev, crack, crater, vegD] дробные) или ранний v3.24
   // (те же квантованные целые, но без маркера). Раньше сейвы v3.23 читались дельта-
@@ -6873,8 +6874,10 @@ function geoApplyAt(b, m, cx, cy, tool, rad, from) {
     // v3.26-фикс (P2-1): клетка помечается/снимается по факту результата — вернувшаяся к
     // исходному состоянию выпадает из дампа. Прежний полный проход по всем edits в конце
     // geoApplyAt выполнялся на каждый pointermove: до сотен тысяч сравнений в секунду.
+    // v3.27-фикс (P2): vegD тоже с толерансом — после симметричных штрихов 🌿/🔥 в
+    // float32 остаётся ~1e-17, строгое === 0 держало клетку в дампа зря
     if (Math.abs(m.elev[i] - m.elev0[i]) < 1e-6 && Math.abs(m.crack[i] - m.crack0[i]) < 1e-6
-      && Math.abs(m.crater[i] - m.crater0[i]) < 1e-6 && m.vegD[i] === 0) delete m.edits[i];
+      && Math.abs(m.crater[i] - m.crater0[i]) < 1e-6 && Math.abs(m.vegD[i]) < 1e-6) delete m.edits[i];
     else m.edits[i] = true;
   }
   if (tool === 'sink') { // кромка кратера — светлый вал на карте
@@ -6993,7 +6996,7 @@ function bioSerialize(bio) {
     })),
   };
 }
-function bioDeserialize(data, sceneVer) {
+function bioDeserialize(data, sceneVer, geoFmt) {
   const bio = { species: [], res: { min: 0.6, bio: 0.35, nrg: 0 }, vegMod: data.vegMod != null ? data.vegMod : 1, log: [], _tr: 0 };
   if (data.res) bio.res = { min: numSafe(data.res.min, 0.6), bio: numSafe(data.res.bio, 0.35), nrg: numSafe(data.res.nrg, 0) };
   if (data.log) bio.log = data.log.slice(-12);
@@ -7001,10 +7004,21 @@ function bioDeserialize(data, sceneVer) {
   // без guard'а правки молча терялись при загрузке
   const ge = data.geoEdits;
   if (ge && (Array.isArray(ge) ? ge.length : (ge.cells && ge.cells.length))) {
-    // v3.26-фикс (P0): формат дампа определяется версией сцены, а не угадыванием:
-    // версия ≤ 3 — плоский абсолют (v3.23), 4 — плоская дельта без маркера (v3.24),
-    // ≥ 5 — объект {v:2, cells}. null → applyGeoEdits использует эвристику.
-    bio._geoEditsFmt = Array.isArray(ge) ? (sceneVer == null ? null : (sceneVer >= 4 ? 'delta' : 'abs')) : 'v2';
+    // v3.27-фикс (P0, регрессия v3.26): формат описывает себя сам, номер релиза —
+    // последняя инстанция. v3.23 (плоский абсолют) и v3.24 (квантованная дельта без
+    // маркера) писали ОДНУ И ТУ ЖЕ version: 4 — поле подняли ещё в v3.20 под
+    // recoveries/projects, поэтому версия 4 ДВУСМЫСЛЕННА и отдаётся эвристике some
+    // по значениям (значение вне диапазонов v3.23 ⇒ дельта). Объект {v:2,cells}
+    // описывает себя; geoFmt=2 — явный маркер сцены (v3.26+), приоритет над эвристикой;
+    // версия ≤ 3 — абсолют; ≥ 5 гео-дампы всегда объекты (плоский массив — аномалия,
+    // трактуем как дельту). null → applyGeoEdits использует эвристику.
+    bio._geoEditsFmt =
+      !Array.isArray(ge) ? 'v2'
+      : geoFmt === 2 ? 'delta'
+      : sceneVer == null ? null
+      : sceneVer <= 3 ? 'abs'
+      : sceneVer === 4 ? null
+      : 'delta';
     bio._geoEditsPending = ge;
   }
   for (const s of (data.species || [])) {
@@ -7543,7 +7557,7 @@ function loadPreset(systemKey) {
 function serializeScene() {
   return JSON.stringify({
     version: 6, // v3.26-фикс (P0): подъём версии остаётся воротами при каждом изменении структуры сейва
-    geoFmt: 2, // v3.26-фикс (P0): формат geoEdits вынесен на верхний уровень сцены (2 = {v:2, cells}); restoreScene передаёт версию сцены в bioDeserialize — больше не угадываем
+    geoFmt: 2, // v3.27-фикс (P0): формат geoEdits на верхнем уровне сцены (2 = {v:2, cells}); restoreScene читает поле и передаёт в bioDeserialize — главный сигнал формата
     savedAt: Date.now(), // v3.20: контроль свежести сейва при отладке
     simYears: state.simYears,
     starType: state.starType, starAge: state.starAge, starPhase: state.starPhase, starLum: state.starLum,
@@ -7644,7 +7658,7 @@ function restoreScene() {
       b.anomalyTau = Math.max(0, num(s.anomalyTau, 0));
       if (s.targetMass != null) b._targetMass = num(s.targetMass, b.mass);
       if (s.targetRadiusV != null) b._targetRadiusV = num(s.targetRadiusV, b.radius);
-      if (s.bio) b.bio = bioDeserialize(s.bio, data.version); // v3.20: биосфера переживает перезагрузку; v3.26-фикс (P0): версия сцены определяет формат geoEdits
+      if (s.bio) b.bio = bioDeserialize(s.bio, data.version, data.geoFmt); // v3.20: биосфера переживает перезагрузку; v3.27-фикс (P0): формат geoEdits — маркер geoFmt и версия сцены
       state.bodies.push(b);
     }
     // v3.20-фикс (P1-8): восстановление проектов терраформинга + санитайзеры num()
